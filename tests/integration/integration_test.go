@@ -1,5 +1,5 @@
 // Package integration provides end-to-end integration tests for the RGS
-// These tests verify the complete flow from registration through gameplay
+// These tests verify the complete flow from login through gameplay
 package integration
 
 import (
@@ -17,6 +17,7 @@ import (
 	"github.com/alexbotov/rgs/internal/auth"
 	"github.com/alexbotov/rgs/internal/config"
 	"github.com/alexbotov/rgs/internal/database"
+	"github.com/alexbotov/rgs/internal/domain"
 	"github.com/alexbotov/rgs/internal/game"
 	"github.com/alexbotov/rgs/internal/rng"
 	"github.com/alexbotov/rgs/internal/wallet"
@@ -112,6 +113,21 @@ func NewTestServer(t *testing.T) *TestServer {
 // Close cleans up test resources
 func (ts *TestServer) Close() {
 	ts.teardown()
+}
+
+// createTestUser creates a user directly via auth service (bypasses API)
+func (ts *TestServer) createTestUser(t *testing.T, username, email, password string) *domain.Player {
+	t.Helper()
+	player, err := ts.Auth.Register(context.Background(), &auth.RegisterRequest{
+		Username: username,
+		Email:    email,
+		Password: password,
+		AcceptTC: true,
+	}, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("Failed to create test user %s: %v", username, err)
+	}
+	return player
 }
 
 // APIResponse represents a standard API response
@@ -251,92 +267,12 @@ func TestServerInfoEndpoint(t *testing.T) {
 // Authentication Tests
 // ============================================================================
 
-func TestPlayerRegistration(t *testing.T) {
-	ts := NewTestServer(t)
-	defer ts.Close()
-
-	// Test successful registration
-	t.Run("SuccessfulRegistration", func(t *testing.T) {
-		resp := ts.doRequest(t, "POST", "/api/v1/auth/register", map[string]interface{}{
-			"username":  "testuser",
-			"email":     "test@example.com",
-			"password":  "password123",
-			"accept_tc": true,
-		}, "")
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusCreated {
-			t.Errorf("Expected status 201, got %d", resp.StatusCode)
-		}
-
-		apiResp := parseResponse(t, resp)
-		if !apiResp.Success {
-			t.Errorf("Expected success, got error: %v", apiResp.Error)
-		}
-
-		playerID := extractField(t, apiResp.Data, "player_id")
-		if playerID == "" {
-			t.Error("Expected player_id in response")
-		}
-	})
-
-	// Test duplicate registration
-	t.Run("DuplicateRegistration", func(t *testing.T) {
-		resp := ts.doRequest(t, "POST", "/api/v1/auth/register", map[string]interface{}{
-			"username":  "testuser",
-			"email":     "test2@example.com",
-			"password":  "password123",
-			"accept_tc": true,
-		}, "")
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusConflict {
-			t.Errorf("Expected status 409, got %d", resp.StatusCode)
-		}
-	})
-
-	// Test registration without T&C acceptance
-	t.Run("NoTCAcceptance", func(t *testing.T) {
-		resp := ts.doRequest(t, "POST", "/api/v1/auth/register", map[string]interface{}{
-			"username":  "testuser2",
-			"email":     "test3@example.com",
-			"password":  "password123",
-			"accept_tc": false,
-		}, "")
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("Expected status 400, got %d", resp.StatusCode)
-		}
-	})
-
-	// Test registration with short password
-	t.Run("ShortPassword", func(t *testing.T) {
-		resp := ts.doRequest(t, "POST", "/api/v1/auth/register", map[string]interface{}{
-			"username":  "testuser3",
-			"email":     "test4@example.com",
-			"password":  "short",
-			"accept_tc": true,
-		}, "")
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("Expected status 400, got %d", resp.StatusCode)
-		}
-	})
-}
-
 func TestPlayerLogin(t *testing.T) {
 	ts := NewTestServer(t)
 	defer ts.Close()
 
-	// Register a user first
-	ts.doRequest(t, "POST", "/api/v1/auth/register", map[string]interface{}{
-		"username":  "logintest",
-		"email":     "login@example.com",
-		"password":  "password123",
-		"accept_tc": true,
-	}, "")
+	// Create a user first (via auth service, not API)
+	ts.createTestUser(t, "logintest", "login@example.com", "password123")
 
 	// Test successful login
 	t.Run("SuccessfulLogin", func(t *testing.T) {
@@ -388,13 +324,8 @@ func TestSessionManagement(t *testing.T) {
 	ts := NewTestServer(t)
 	defer ts.Close()
 
-	// Register and login
-	ts.doRequest(t, "POST", "/api/v1/auth/register", map[string]interface{}{
-		"username":  "sessiontest",
-		"email":     "session@example.com",
-		"password":  "password123",
-		"accept_tc": true,
-	}, "")
+	// Create user and login
+	ts.createTestUser(t, "sessiontest", "session@example.com", "password123")
 
 	loginResp := ts.doRequest(t, "POST", "/api/v1/auth/login", map[string]interface{}{
 		"username": "sessiontest",
@@ -442,13 +373,8 @@ func TestWalletOperations(t *testing.T) {
 	ts := NewTestServer(t)
 	defer ts.Close()
 
-	// Setup: Register and login
-	ts.doRequest(t, "POST", "/api/v1/auth/register", map[string]interface{}{
-		"username":  "wallettest",
-		"email":     "wallet@example.com",
-		"password":  "password123",
-		"accept_tc": true,
-	}, "")
+	// Setup: Create user and login
+	ts.createTestUser(t, "wallettest", "wallet@example.com", "password123")
 
 	loginResp := ts.doRequest(t, "POST", "/api/v1/auth/login", map[string]interface{}{
 		"username": "wallettest",
@@ -559,13 +485,8 @@ func TestGameOperations(t *testing.T) {
 	ts := NewTestServer(t)
 	defer ts.Close()
 
-	// Setup: Register, login, and deposit
-	ts.doRequest(t, "POST", "/api/v1/auth/register", map[string]interface{}{
-		"username":  "gametest",
-		"email":     "game@example.com",
-		"password":  "password123",
-		"accept_tc": true,
-	}, "")
+	// Setup: Create user, login, and deposit
+	ts.createTestUser(t, "gametest", "game@example.com", "password123")
 
 	loginResp := ts.doRequest(t, "POST", "/api/v1/auth/login", map[string]interface{}{
 		"username": "gametest",
@@ -831,20 +752,10 @@ func TestCompletePlayerJourney(t *testing.T) {
 	ts := NewTestServer(t)
 	defer ts.Close()
 
-	// Step 1: Register
-	t.Log("Step 1: Registering player...")
-	regResp := ts.doRequest(t, "POST", "/api/v1/auth/register", map[string]interface{}{
-		"username":  "journey_player",
-		"email":     "journey@example.com",
-		"password":  "securepass123",
-		"accept_tc": true,
-	}, "")
-	regData := parseResponse(t, regResp)
-	if !regData.Success {
-		t.Fatalf("Registration failed: %v", regData.Error)
-	}
-	playerID := extractField(t, regData.Data, "player_id")
-	t.Logf("  Player ID: %s", playerID)
+	// Step 1: Create player (via auth service)
+	t.Log("Step 1: Creating player...")
+	player := ts.createTestUser(t, "journey_player", "journey@example.com", "securepass123")
+	t.Logf("  Player ID: %s", player.ID)
 
 	// Step 2: Login
 	t.Log("Step 2: Logging in...")

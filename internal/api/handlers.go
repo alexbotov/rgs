@@ -93,7 +93,7 @@ func getClientIP(r *http.Request) string {
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	// Check RNG health (GLI-19 §3.3.3)
 	rngHealth, _ := h.rng.HealthCheck()
-	
+
 	respondJSON(w, http.StatusOK, map[string]interface{}{
 		"status":     "healthy",
 		"rng_status": rngHealth,
@@ -110,32 +110,6 @@ func (h *Handler) ServerInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 // === Authentication ===
-
-// Register handles POST /api/v1/auth/register
-func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
-	var req auth.RegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
-		return
-	}
-
-	player, err := h.auth.Register(r.Context(), &req, getClientIP(r))
-	if err != nil {
-		switch err {
-		case auth.ErrUserExists:
-			respondError(w, http.StatusConflict, "USER_EXISTS", "Username or email already exists")
-		default:
-			respondError(w, http.StatusBadRequest, "REGISTRATION_FAILED", err.Error())
-		}
-		return
-	}
-
-	respondJSON(w, http.StatusCreated, map[string]interface{}{
-		"player_id": player.ID,
-		"username":  player.Username,
-		"message":   "Registration successful",
-	})
-}
 
 // Login handles POST /api/v1/auth/login
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +149,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 // Logout handles POST /api/v1/auth/logout
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	session := r.Context().Value("session").(*domain.Session)
-	
+
 	if err := h.auth.Logout(r.Context(), session.ID); err != nil {
 		respondError(w, http.StatusInternalServerError, "LOGOUT_FAILED", "Logout failed")
 		return
@@ -492,4 +466,3 @@ func (h *Handler) GetGameHistory(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusOK, historyList)
 }
-

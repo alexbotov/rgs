@@ -2,6 +2,15 @@
 
 End-to-end API tests for the Remote Gaming Server, generated from the Go integration tests.
 
+## Prerequisites
+
+**Important:** The RGS does not expose a public registration API. Test users must be created before running these tests.
+
+Create test users via the auth service or directly in the database. The collection expects the following variables to be set:
+
+- `test_username` - Username of an existing test user (default: `testuser`)
+- `test_password` - Password for the test user (default: `password123`)
+
 ## Files
 
 - `RGS_Collection.postman_collection.json` - Main test collection
@@ -17,23 +26,24 @@ End-to-end API tests for the Remote Gaming Server, generated from the Go integra
 ## Configuration
 
 1. Select the **RGS Local** environment from the dropdown (top-right)
-2. Update `base_url` if your server runs on a different port:
+2. Update variables as needed:
    - Click the environment dropdown → Edit
-   - Change `http://localhost:8090` to your server URL
+   - Set `base_url` to your server URL (default: `http://localhost:8090`)
+   - Set `test_username` and `test_password` to valid credentials
 
 ## Collection Structure
 
-Each folder is **self-contained** and can be run independently. All folders follow the same structure:
+Each folder is **self-contained** and can be run independently (assuming a test user exists):
 
 | Folder | Prerequisites | Description |
 |--------|---------------|-------------|
 | **Health Check** | None | Basic server health (2 tests) |
-| **Authentication** | None | Full auth flow with register/login (10 tests) |
-| **Wallet** | None | Includes register/login, then wallet ops (8 tests) |
-| **Games** | None | Includes register/login/deposit, then gameplay (11 tests) |
-| **Complete Player Journey** | None | Full E2E flow (12 tests) |
+| **Authentication** | Test user | Login, session management, logout (6 tests) |
+| **Wallet** | Test user | Login then wallet operations (7 tests) |
+| **Games** | Test user | Login, deposit, then gameplay (10 tests) |
+| **Complete Player Journey** | Test user | Full E2E flow (11 tests) |
 
-Each folder starts with numbered steps (1, 2, 3...) and includes all setup needed (registration, login, deposit where applicable).
+Each folder starts with a login step and includes all other setup needed (deposit where applicable).
 
 ## Running Tests
 
@@ -47,7 +57,7 @@ Each folder starts with numbered steps (1, 2, 3...) and includes all setup neede
 
 Each folder is self-contained - just select any folder and run it independently:
 - Right-click folder → **Run folder**
-- All tests will pass without running other folders first
+- All tests will pass without running other folders first (assuming a test user exists)
 
 ### Run with Newman (CLI)
 
@@ -75,11 +85,11 @@ newman run RGS_Collection.postman_collection.json \
 | Folder | Tests |
 |--------|-------|
 | Health Check | 2 |
-| Authentication | 10 |
-| Wallet | 8 |
-| Games | 11 |
-| Complete Player Journey | 12 |
-| **Total** | **43** |
+| Authentication | 6 |
+| Wallet | 7 |
+| Games | 10 |
+| Complete Player Journey | 11 |
+| **Total** | **36** |
 
 ## Test Scenarios by Folder
 
@@ -87,61 +97,53 @@ newman run RGS_Collection.postman_collection.json \
 1. Health endpoint - verify server is healthy
 2. Server info - verify server name and version
 
-### Authentication (10 tests)
-1. Register new player
-2. Register duplicate username (409 expected)
-3. Register without T&C (400 expected)
-4. Register short password (400 expected)
-5. Login successful
-6. Login invalid password (401 expected)
-7. Login non-existent user (401 expected)
-8. Get session
-9. Get session unauthorized (401 expected)
-10. Logout
+### Authentication (6 tests)
+1. Login successful
+2. Login invalid password (401 expected)
+3. Login non-existent user (401 expected)
+4. Get session
+5. Get session unauthorized (401 expected)
+6. Logout
 
-### Wallet (8 tests)
-1. Register new player
-2. Login
-3. Check initial balance (0)
-4. Deposit $100
-5. Check balance after deposit ($100)
-6. Withdraw $25 ($75 remaining)
-7. Withdraw insufficient funds (400 expected)
-8. Transaction history
-
-### Games (11 tests)
-1. Register new player
-2. Login
+### Wallet (7 tests)
+1. Login
+2. Check initial balance
 3. Deposit $100
-4. List games
-5. Get game details (Fortune Slots)
-6. Start game session
-7. Play game ($1.00 wager)
-8. Play game ($0.50 wager)
-9. Play game insufficient balance (400 expected)
-10. Play game below minimum (400 expected)
-11. Game history
+4. Check balance after deposit
+5. Withdraw $25
+6. Withdraw insufficient funds (400 expected)
+7. Transaction history
 
-### Complete Player Journey (12 tests)
+### Games (10 tests)
+1. Login
+2. Deposit $100
+3. List games
+4. Get game details (Fortune Slots)
+5. Start game session
+6. Play game ($1.00 wager)
+7. Play game ($0.50 wager)
+8. Play game insufficient balance (400 expected)
+9. Play game below minimum (400 expected)
+10. Game history
+
+### Complete Player Journey (11 tests)
 Full end-to-end flow simulating a real player:
-1. Register new account
-2. Login
-3. Check initial balance
-4. Deposit $500
-5. Browse available games
-6. Start game session
-7. Play 3 rounds at $5 each
-8. Check game history
-9. Check final balance
-10. Withdraw winnings
-11. View transaction history
-12. Logout
+1. Login
+2. Check initial balance
+3. Deposit $500
+4. Browse available games
+5. Start game session
+6. Play 3 rounds at $5 each
+7. Check game history
+8. Check final balance
+9. Withdraw winnings
+10. View transaction history
+11. Logout
 
 ## Notes
 
-- Tests use dynamic timestamps to generate unique usernames/emails per run
+- **Test users must be pre-created** - the collection no longer includes registration tests
 - Authentication tokens are automatically stored and reused within each folder
-- Each folder uses shared collection variables (`current_username`, `token`, etc.)
-- Pre-request scripts handle test data generation
+- Each folder uses shared collection variables (`test_username`, `token`, etc.)
 - Test scripts validate responses and log progress to console
 - Console output shows step-by-step progress with results

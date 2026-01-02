@@ -280,13 +280,16 @@ func TestAccountLockout(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Register a user
-	svc.Register(ctx, &RegisterRequest{
+	// Register a user - check for errors
+	_, err := svc.Register(ctx, &RegisterRequest{
 		Username: "lockuser",
 		Email:    "lock@example.com",
 		Password: "password123",
 		AcceptTC: true,
 	}, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("Failed to register lockuser: %v", err)
+	}
 
 	t.Run("FailedLoginRecorded", func(t *testing.T) {
 		// Attempt login with wrong password - should fail with invalid credentials
@@ -308,7 +311,10 @@ func TestAccountLockout(t *testing.T) {
 		}, "127.0.0.1", "TestAgent")
 
 		if err != nil {
-			t.Errorf("Expected successful login, got: %v", err)
+			t.Fatalf("Expected successful login, got: %v", err)
+		}
+		if result == nil {
+			t.Fatal("Expected non-nil result")
 		}
 		if result.Token == "" {
 			t.Error("Expected token")

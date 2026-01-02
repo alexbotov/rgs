@@ -25,7 +25,6 @@ func (h *Handler) SetupRouter() *mux.Router {
 
 	// Auth routes (public)
 	auth := api.PathPrefix("/auth").Subrouter()
-	auth.HandleFunc("/register", h.Register).Methods("POST")
 	auth.HandleFunc("/login", h.Login).Methods("POST")
 
 	// Protected routes
