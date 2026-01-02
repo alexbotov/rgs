@@ -2,7 +2,7 @@
 	"info": {
 		"_postman_id": "rgs-integration-tests",
 		"name": "RGS - Remote Gaming Server",
-		"description": "End-to-end integration tests for the Remote Gaming Server based on GLI-19 compliance standards.\n\n## Usage\n1. Set the `base_url` variable to your RGS server URL\n2. Run the collection in order - authentication flows set tokens automatically\n3. Use the 'Complete Player Journey' folder for full E2E testing",
+		"description": "End-to-end integration tests for the Remote Gaming Server based on GLI-19 compliance standards.\n\n## Usage\n1. Set the `base_url` variable to your RGS server URL\n2. Each folder is self-contained and can be run independently\n3. All folders follow the same structure with numbered steps",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"variable": [
@@ -22,57 +22,17 @@
 			"type": "string"
 		},
 		{
-			"key": "session_id",
-			"value": "",
-			"type": "string"
-		},
-		{
 			"key": "game_session_id",
 			"value": "",
 			"type": "string"
 		},
 		{
-			"key": "test_username",
+			"key": "current_username",
 			"value": "",
 			"type": "string"
 		},
 		{
-			"key": "test_email",
-			"value": "",
-			"type": "string"
-		},
-		{
-			"key": "wallet_username",
-			"value": "",
-			"type": "string"
-		},
-		{
-			"key": "wallet_email",
-			"value": "",
-			"type": "string"
-		},
-		{
-			"key": "game_username",
-			"value": "",
-			"type": "string"
-		},
-		{
-			"key": "game_email",
-			"value": "",
-			"type": "string"
-		},
-		{
-			"key": "journey_username",
-			"value": "",
-			"type": "string"
-		},
-		{
-			"key": "journey_email",
-			"value": "",
-			"type": "string"
-		},
-		{
-			"key": "journey_player_id",
+			"key": "current_email",
 			"value": "",
 			"type": "string"
 		}
@@ -82,7 +42,7 @@
 			"name": "Health Check",
 			"item": [
 				{
-					"name": "Health Endpoint",
+					"name": "1. Health Endpoint",
 					"event": [
 						{
 							"listen": "test",
@@ -101,7 +61,9 @@
 									"pm.test('RNG status is included', function () {",
 									"    const jsonData = pm.response.json();",
 									"    pm.expect(jsonData.data).to.have.property('rng_status');",
-									"});"
+									"});",
+									"",
+									"console.log('Step 1: Health endpoint verified - Server is healthy');"
 								],
 								"type": "text/javascript"
 							}
@@ -118,7 +80,7 @@
 					}
 				},
 				{
-					"name": "Server Info",
+					"name": "2. Server Info",
 					"event": [
 						{
 							"listen": "test",
@@ -131,7 +93,10 @@
 									"pm.test('Server name is RGS', function () {",
 									"    const jsonData = pm.response.json();",
 									"    pm.expect(jsonData.data.name).to.eql('RGS');",
-									"});"
+									"});",
+									"",
+									"console.log('Step 2: Server info verified - Name: RGS');",
+									"console.log('✓ Health Check tests passed!');"
 								],
 								"type": "text/javascript"
 							}
@@ -147,14 +112,26 @@
 						}
 					}
 				}
-			]
+			],
+			"description": "Basic server health and info endpoints. No authentication required."
 		},
 		{
 			"name": "Authentication",
 			"item": [
 				{
-					"name": "Register - Successful",
+					"name": "1. Register New Player",
 					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"const timestamp = Date.now();",
+									"pm.collectionVariables.set('current_username', 'auth_' + timestamp);",
+									"pm.collectionVariables.set('current_email', 'auth_' + timestamp + '@example.com');"
+								],
+								"type": "text/javascript"
+							}
+						},
 						{
 							"listen": "test",
 							"script": {
@@ -167,24 +144,10 @@
 									"    const jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
 									"    pm.expect(jsonData.data).to.have.property('player_id');",
+									"    pm.collectionVariables.set('player_id', jsonData.data.player_id);",
 									"});",
 									"",
-									"pm.test('Store player_id', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.collectionVariables.set('player_id', jsonData.data.player_id);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						},
-						{
-							"listen": "prerequest",
-							"script": {
-								"exec": [
-									"// Generate unique username for each run",
-									"const timestamp = Date.now();",
-									"pm.collectionVariables.set('test_username', 'testuser_' + timestamp);",
-									"pm.collectionVariables.set('test_email', 'test_' + timestamp + '@example.com');"
+									"console.log('Step 1: Player registered successfully');"
 								],
 								"type": "text/javascript"
 							}
@@ -200,7 +163,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"username\": \"{{test_username}}\",\n    \"email\": \"{{test_email}}\",\n    \"password\": \"password123\",\n    \"accept_tc\": true\n}"
+							"raw": "{\n    \"username\": \"{{current_username}}\",\n    \"email\": \"{{current_email}}\",\n    \"password\": \"password123\",\n    \"accept_tc\": true\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/api/v1/auth/register",
@@ -210,7 +173,7 @@
 					}
 				},
 				{
-					"name": "Register - Duplicate Username",
+					"name": "2. Register Duplicate Username",
 					"event": [
 						{
 							"listen": "test",
@@ -224,7 +187,9 @@
 									"    const jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.false;",
 									"    pm.expect(jsonData.error).to.exist;",
-									"});"
+									"});",
+									"",
+									"console.log('Step 2: Duplicate registration correctly rejected');"
 								],
 								"type": "text/javascript"
 							}
@@ -240,7 +205,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"username\": \"{{test_username}}\",\n    \"email\": \"different@example.com\",\n    \"password\": \"password123\",\n    \"accept_tc\": true\n}"
+							"raw": "{\n    \"username\": \"{{current_username}}\",\n    \"email\": \"different@example.com\",\n    \"password\": \"password123\",\n    \"accept_tc\": true\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/api/v1/auth/register",
@@ -250,7 +215,7 @@
 					}
 				},
 				{
-					"name": "Register - No T&C Acceptance",
+					"name": "3. Register Without T&C",
 					"event": [
 						{
 							"listen": "test",
@@ -258,7 +223,9 @@
 								"exec": [
 									"pm.test('Status code is 400 Bad Request', function () {",
 									"    pm.response.to.have.status(400);",
-									"});"
+									"});",
+									"",
+									"console.log('Step 3: Registration without T&C correctly rejected');"
 								],
 								"type": "text/javascript"
 							}
@@ -284,7 +251,7 @@
 					}
 				},
 				{
-					"name": "Register - Short Password",
+					"name": "4. Register Short Password",
 					"event": [
 						{
 							"listen": "test",
@@ -292,7 +259,9 @@
 								"exec": [
 									"pm.test('Status code is 400 Bad Request', function () {",
 									"    pm.response.to.have.status(400);",
-									"});"
+									"});",
+									"",
+									"console.log('Step 4: Short password correctly rejected');"
 								],
 								"type": "text/javascript"
 							}
@@ -318,7 +287,7 @@
 					}
 				},
 				{
-					"name": "Login - Successful",
+					"name": "5. Login Successful",
 					"event": [
 						{
 							"listen": "test",
@@ -332,15 +301,10 @@
 									"    const jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
 									"    pm.expect(jsonData.data).to.have.property('token');",
+									"    pm.collectionVariables.set('token', jsonData.data.token);",
 									"});",
 									"",
-									"pm.test('Store auth token', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.collectionVariables.set('token', jsonData.data.token);",
-									"    if (jsonData.data.session_id) {",
-									"        pm.collectionVariables.set('session_id', jsonData.data.session_id);",
-									"    }",
-									"});"
+									"console.log('Step 5: Login successful - Token acquired');"
 								],
 								"type": "text/javascript"
 							}
@@ -356,7 +320,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"username\": \"{{test_username}}\",\n    \"password\": \"password123\"\n}"
+							"raw": "{\n    \"username\": \"{{current_username}}\",\n    \"password\": \"password123\"\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/api/v1/auth/login",
@@ -366,7 +330,7 @@
 					}
 				},
 				{
-					"name": "Login - Invalid Password",
+					"name": "6. Login Invalid Password",
 					"event": [
 						{
 							"listen": "test",
@@ -374,7 +338,9 @@
 								"exec": [
 									"pm.test('Status code is 401 Unauthorized', function () {",
 									"    pm.response.to.have.status(401);",
-									"});"
+									"});",
+									"",
+									"console.log('Step 6: Invalid password correctly rejected');"
 								],
 								"type": "text/javascript"
 							}
@@ -390,7 +356,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"username\": \"{{test_username}}\",\n    \"password\": \"wrongpassword\"\n}"
+							"raw": "{\n    \"username\": \"{{current_username}}\",\n    \"password\": \"wrongpassword\"\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/api/v1/auth/login",
@@ -400,7 +366,7 @@
 					}
 				},
 				{
-					"name": "Login - Non-Existent User",
+					"name": "7. Login Non-Existent User",
 					"event": [
 						{
 							"listen": "test",
@@ -408,7 +374,9 @@
 								"exec": [
 									"pm.test('Status code is 401 Unauthorized', function () {",
 									"    pm.response.to.have.status(401);",
-									"});"
+									"});",
+									"",
+									"console.log('Step 7: Non-existent user correctly rejected');"
 								],
 								"type": "text/javascript"
 							}
@@ -424,7 +392,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"username\": \"nonexistent_user\",\n    \"password\": \"password123\"\n}"
+							"raw": "{\n    \"username\": \"nonexistent_user_12345\",\n    \"password\": \"password123\"\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/api/v1/auth/login",
@@ -434,7 +402,7 @@
 					}
 				},
 				{
-					"name": "Get Session",
+					"name": "8. Get Session",
 					"event": [
 						{
 							"listen": "test",
@@ -447,7 +415,9 @@
 									"pm.test('Session data returned', function () {",
 									"    const jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
+									"});",
+									"",
+									"console.log('Step 8: Session data retrieved');"
 								],
 								"type": "text/javascript"
 							}
@@ -469,7 +439,7 @@
 					}
 				},
 				{
-					"name": "Get Session - Unauthorized",
+					"name": "9. Get Session Unauthorized",
 					"event": [
 						{
 							"listen": "test",
@@ -477,7 +447,9 @@
 								"exec": [
 									"pm.test('Status code is 401 Unauthorized', function () {",
 									"    pm.response.to.have.status(401);",
-									"});"
+									"});",
+									"",
+									"console.log('Step 9: Unauthorized session access correctly rejected');"
 								],
 								"type": "text/javascript"
 							}
@@ -494,7 +466,7 @@
 					}
 				},
 				{
-					"name": "Logout",
+					"name": "10. Logout",
 					"event": [
 						{
 							"listen": "test",
@@ -507,7 +479,10 @@
 									"pm.test('Logout successful', function () {",
 									"    const jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
-									"});"
+									"});",
+									"",
+									"console.log('Step 10: Logged out successfully');",
+									"console.log('✓ Authentication tests passed!');"
 								],
 								"type": "text/javascript"
 							}
@@ -528,741 +503,11 @@
 						}
 					}
 				}
-			]
+			],
+			"description": "Complete authentication flow: registration, login, session management, and logout."
 		},
 		{
 			"name": "Wallet",
-			"item": [
-				{
-					"name": "Setup - Register & Login",
-					"event": [
-						{
-							"listen": "prerequest",
-							"script": {
-								"exec": [
-									"const timestamp = Date.now();",
-									"pm.collectionVariables.set('wallet_username', 'wallet_' + timestamp);",
-									"pm.collectionVariables.set('wallet_email', 'wallet_' + timestamp + '@example.com');"
-								],
-								"type": "text/javascript"
-							}
-						},
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 201', function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"// Now login",
-									"const baseUrl = pm.collectionVariables.get('base_url');",
-									"const username = pm.collectionVariables.get('wallet_username');",
-									"",
-									"pm.sendRequest({",
-									"    url: baseUrl + '/api/v1/auth/login',",
-									"    method: 'POST',",
-									"    header: { 'Content-Type': 'application/json' },",
-									"    body: {",
-									"        mode: 'raw',",
-									"        raw: JSON.stringify({",
-									"            username: username,",
-									"            password: 'password123'",
-									"        })",
-									"    }",
-									"}, function (err, res) {",
-									"    const json = res.json();",
-									"    pm.collectionVariables.set('token', json.data.token);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"username\": \"{{wallet_username}}\",\n    \"email\": \"{{wallet_email}}\",\n    \"password\": \"password123\",\n    \"accept_tc\": true\n}"
-						},
-						"url": {
-							"raw": "{{base_url}}/api/v1/auth/register",
-							"host": ["{{base_url}}"],
-							"path": ["api", "v1", "auth", "register"]
-						}
-					}
-				},
-				{
-					"name": "Get Balance - Initial",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Initial balance is 0', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data.available).to.eql(0);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{token}}"
-							}
-						],
-						"url": {
-							"raw": "{{base_url}}/api/v1/wallet/balance",
-							"host": ["{{base_url}}"],
-							"path": ["api", "v1", "wallet", "balance"]
-						}
-					}
-				},
-				{
-					"name": "Deposit",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Deposit successful', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data.balance_after).to.eql(100);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"amount\": 100.00,\n    \"reference\": \"test-deposit-{{$timestamp}}\"\n}"
-						},
-						"url": {
-							"raw": "{{base_url}}/api/v1/wallet/deposit",
-							"host": ["{{base_url}}"],
-							"path": ["api", "v1", "wallet", "deposit"]
-						}
-					}
-				},
-				{
-					"name": "Get Balance - After Deposit",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Balance is 100', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.data.available).to.eql(100);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{token}}"
-							}
-						],
-						"url": {
-							"raw": "{{base_url}}/api/v1/wallet/balance",
-							"host": ["{{base_url}}"],
-							"path": ["api", "v1", "wallet", "balance"]
-						}
-					}
-				},
-				{
-					"name": "Withdraw",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Withdrawal successful', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data.balance_after).to.eql(75);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"amount\": 25.00,\n    \"reference\": \"test-withdrawal-{{$timestamp}}\"\n}"
-						},
-						"url": {
-							"raw": "{{base_url}}/api/v1/wallet/withdraw",
-							"host": ["{{base_url}}"],
-							"path": ["api", "v1", "wallet", "withdraw"]
-						}
-					}
-				},
-				{
-					"name": "Withdraw - Insufficient Funds",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 400 Bad Request', function () {",
-									"    pm.response.to.have.status(400);",
-									"});",
-									"",
-									"pm.test('Error for insufficient funds', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.false;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"amount\": 1000.00,\n    \"reference\": \"too-much-{{$timestamp}}\"\n}"
-						},
-						"url": {
-							"raw": "{{base_url}}/api/v1/wallet/withdraw",
-							"host": ["{{base_url}}"],
-							"path": ["api", "v1", "wallet", "withdraw"]
-						}
-					}
-				},
-				{
-					"name": "Transaction History",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Transaction history returned', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data).to.be.an('array');",
-									"    pm.expect(jsonData.data.length).to.be.at.least(2);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{token}}"
-							}
-						],
-						"url": {
-							"raw": "{{base_url}}/api/v1/wallet/transactions",
-							"host": ["{{base_url}}"],
-							"path": ["api", "v1", "wallet", "transactions"]
-						}
-					}
-				}
-			]
-		},
-		{
-			"name": "Games",
-			"item": [
-				{
-					"name": "Setup - Register, Login & Deposit",
-					"event": [
-						{
-							"listen": "prerequest",
-							"script": {
-								"exec": [
-									"const timestamp = Date.now();",
-									"pm.collectionVariables.set('game_username', 'gamer_' + timestamp);",
-									"pm.collectionVariables.set('game_email', 'gamer_' + timestamp + '@example.com');"
-								],
-								"type": "text/javascript"
-							}
-						},
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Registration successful', function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"const baseUrl = pm.collectionVariables.get('base_url');",
-									"const username = pm.collectionVariables.get('game_username');",
-									"",
-									"// Login",
-									"pm.sendRequest({",
-									"    url: baseUrl + '/api/v1/auth/login',",
-									"    method: 'POST',",
-									"    header: { 'Content-Type': 'application/json' },",
-									"    body: {",
-									"        mode: 'raw',",
-									"        raw: JSON.stringify({",
-									"            username: username,",
-									"            password: 'password123'",
-									"        })",
-									"    }",
-									"}, function (err, res) {",
-									"    const json = res.json();",
-									"    const token = json.data.token;",
-									"    pm.collectionVariables.set('token', token);",
-									"    ",
-									"    // Deposit",
-									"    pm.sendRequest({",
-									"        url: baseUrl + '/api/v1/wallet/deposit',",
-									"        method: 'POST',",
-									"        header: {",
-									"            'Content-Type': 'application/json',",
-									"            'Authorization': 'Bearer ' + token",
-									"        },",
-									"        body: {",
-									"            mode: 'raw',",
-									"            raw: JSON.stringify({",
-									"                amount: 100.00,",
-									"                reference: 'game-deposit-' + Date.now()",
-									"            })",
-									"        }",
-									"    }, function (err, res) {",
-									"        console.log('Deposit complete');",
-									"    });",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"username\": \"{{game_username}}\",\n    \"email\": \"{{game_email}}\",\n    \"password\": \"password123\",\n    \"accept_tc\": true\n}"
-						},
-						"url": {
-							"raw": "{{base_url}}/api/v1/auth/register",
-							"host": ["{{base_url}}"],
-							"path": ["api", "v1", "auth", "register"]
-						}
-					}
-				},
-				{
-					"name": "List Games",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Games list returned', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data).to.be.an('array');",
-									"    pm.expect(jsonData.data.length).to.be.at.least(1);",
-									"});",
-									"",
-									"pm.test('Fortune Slots available', function () {",
-									"    const jsonData = pm.response.json();",
-									"    const fortuneSlots = jsonData.data.find(g => g.id === 'fortune-slots');",
-									"    pm.expect(fortuneSlots).to.exist;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{token}}"
-							}
-						],
-						"url": {
-							"raw": "{{base_url}}/api/v1/games",
-							"host": ["{{base_url}}"],
-							"path": ["api", "v1", "games"]
-						}
-					}
-				},
-				{
-					"name": "Get Game Details - Fortune Slots",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Game details returned', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data.name).to.eql('Fortune Slots');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{token}}"
-							}
-						],
-						"url": {
-							"raw": "{{base_url}}/api/v1/games/fortune-slots",
-							"host": ["{{base_url}}"],
-							"path": ["api", "v1", "games", "fortune-slots"]
-						}
-					}
-				},
-				{
-					"name": "Start Game Session",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 201', function () {",
-									"    pm.response.to.have.status(201);",
-									"});",
-									"",
-									"pm.test('Session created', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data).to.have.property('session_id');",
-									"});",
-									"",
-									"pm.test('Store game session ID', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.collectionVariables.set('game_session_id', jsonData.data.session_id);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{token}}"
-							}
-						],
-						"url": {
-							"raw": "{{base_url}}/api/v1/games/fortune-slots/session",
-							"host": ["{{base_url}}"],
-							"path": ["api", "v1", "games", "fortune-slots", "session"]
-						}
-					}
-				},
-				{
-					"name": "Play Game - $1.00 Wager",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Game play successful', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data).to.have.property('cycle_id');",
-									"    pm.expect(jsonData.data).to.have.property('outcome');",
-									"});",
-									"",
-									"pm.test('Outcome has reels', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.data.outcome).to.have.property('reels');",
-									"    pm.expect(jsonData.data.outcome.reels).to.be.an('array');",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"session_id\": \"{{game_session_id}}\",\n    \"wager_amount\": 100\n}"
-						},
-						"url": {
-							"raw": "{{base_url}}/api/v1/games/play",
-							"host": ["{{base_url}}"],
-							"path": ["api", "v1", "games", "play"]
-						}
-					}
-				},
-				{
-					"name": "Play Game - $0.50 Wager",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"session_id\": \"{{game_session_id}}\",\n    \"wager_amount\": 50\n}"
-						},
-						"url": {
-							"raw": "{{base_url}}/api/v1/games/play",
-							"host": ["{{base_url}}"],
-							"path": ["api", "v1", "games", "play"]
-						}
-					}
-				},
-				{
-					"name": "Play Game - Insufficient Balance",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 400 Bad Request', function () {",
-									"    pm.response.to.have.status(400);",
-									"});",
-									"",
-									"pm.test('Error for insufficient funds', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.false;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"session_id\": \"{{game_session_id}}\",\n    \"wager_amount\": 1000000\n}"
-						},
-						"url": {
-							"raw": "{{base_url}}/api/v1/games/play",
-							"host": ["{{base_url}}"],
-							"path": ["api", "v1", "games", "play"]
-						}
-					}
-				},
-				{
-					"name": "Play Game - Below Minimum Wager",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 400 Bad Request', function () {",
-									"    pm.response.to.have.status(400);",
-									"});",
-									"",
-									"pm.test('Error for invalid wager', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.false;",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
-					"request": {
-						"method": "POST",
-						"header": [
-							{
-								"key": "Content-Type",
-								"value": "application/json"
-							},
-							{
-								"key": "Authorization",
-								"value": "Bearer {{token}}"
-							}
-						],
-						"body": {
-							"mode": "raw",
-							"raw": "{\n    \"session_id\": \"{{game_session_id}}\",\n    \"wager_amount\": 1\n}"
-						},
-						"url": {
-							"raw": "{{base_url}}/api/v1/games/play",
-							"host": ["{{base_url}}"],
-							"path": ["api", "v1", "games", "play"]
-						}
-					}
-				},
-				{
-					"name": "Game History",
-					"event": [
-						{
-							"listen": "test",
-							"script": {
-								"exec": [
-									"pm.test('Status code is 200', function () {",
-									"    pm.response.to.have.status(200);",
-									"});",
-									"",
-									"pm.test('Game history returned', function () {",
-									"    const jsonData = pm.response.json();",
-									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.expect(jsonData.data).to.be.an('array');",
-									"    pm.expect(jsonData.data.length).to.be.at.least(2);",
-									"});"
-								],
-								"type": "text/javascript"
-							}
-						}
-					],
-					"request": {
-						"method": "GET",
-						"header": [
-							{
-								"key": "Authorization",
-								"value": "Bearer {{token}}"
-							}
-						],
-						"url": {
-							"raw": "{{base_url}}/api/v1/games/history",
-							"host": ["{{base_url}}"],
-							"path": ["api", "v1", "games", "history"]
-						}
-					}
-				}
-			]
-		},
-		{
-			"name": "Complete Player Journey",
 			"item": [
 				{
 					"name": "1. Register New Player",
@@ -1272,8 +517,8 @@
 							"script": {
 								"exec": [
 									"const timestamp = Date.now();",
-									"pm.collectionVariables.set('journey_username', 'journey_' + timestamp);",
-									"pm.collectionVariables.set('journey_email', 'journey_' + timestamp + '@example.com');"
+									"pm.collectionVariables.set('current_username', 'wallet_' + timestamp);",
+									"pm.collectionVariables.set('current_email', 'wallet_' + timestamp + '@example.com');"
 								],
 								"type": "text/javascript"
 							}
@@ -1286,10 +531,10 @@
 									"    pm.response.to.have.status(201);",
 									"    const jsonData = pm.response.json();",
 									"    pm.expect(jsonData.success).to.be.true;",
-									"    pm.collectionVariables.set('journey_player_id', jsonData.data.player_id);",
+									"    pm.collectionVariables.set('player_id', jsonData.data.player_id);",
 									"});",
 									"",
-									"console.log('Step 1: Player registered successfully');"
+									"console.log('Step 1: Player registered for wallet tests');"
 								],
 								"type": "text/javascript"
 							}
@@ -1305,7 +550,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"username\": \"{{journey_username}}\",\n    \"email\": \"{{journey_email}}\",\n    \"password\": \"securepass123\",\n    \"accept_tc\": true\n}"
+							"raw": "{\n    \"username\": \"{{current_username}}\",\n    \"email\": \"{{current_email}}\",\n    \"password\": \"password123\",\n    \"accept_tc\": true\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/api/v1/auth/register",
@@ -1344,7 +589,840 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"username\": \"{{journey_username}}\",\n    \"password\": \"securepass123\"\n}"
+							"raw": "{\n    \"username\": \"{{current_username}}\",\n    \"password\": \"password123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/login",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "auth", "login"]
+						}
+					}
+				},
+				{
+					"name": "3. Check Initial Balance",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Initial balance is 0', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data.available).to.eql(0);",
+									"});",
+									"",
+									"console.log('Step 3: Initial balance verified (0)');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/wallet/balance",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "wallet", "balance"]
+						}
+					}
+				},
+				{
+					"name": "4. Deposit $100",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Deposit successful', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data.balance_after).to.eql(100);",
+									"});",
+									"",
+									"console.log('Step 4: Deposited $100');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"amount\": 100.00,\n    \"reference\": \"deposit-{{$timestamp}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/wallet/deposit",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "wallet", "deposit"]
+						}
+					}
+				},
+				{
+					"name": "5. Check Balance After Deposit",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Balance is 100', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.data.available).to.eql(100);",
+									"});",
+									"",
+									"console.log('Step 5: Balance after deposit verified ($100)');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/wallet/balance",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "wallet", "balance"]
+						}
+					}
+				},
+				{
+					"name": "6. Withdraw $25",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Withdrawal successful', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data.balance_after).to.eql(75);",
+									"});",
+									"",
+									"console.log('Step 6: Withdrew $25, balance now $75');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"amount\": 25.00,\n    \"reference\": \"withdrawal-{{$timestamp}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/wallet/withdraw",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "wallet", "withdraw"]
+						}
+					}
+				},
+				{
+					"name": "7. Withdraw Insufficient Funds",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 400 Bad Request', function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"",
+									"pm.test('Error for insufficient funds', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.false;",
+									"});",
+									"",
+									"console.log('Step 7: Insufficient funds correctly rejected');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"amount\": 1000.00,\n    \"reference\": \"too-much-{{$timestamp}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/wallet/withdraw",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "wallet", "withdraw"]
+						}
+					}
+				},
+				{
+					"name": "8. Transaction History",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Transaction history returned', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.be.an('array');",
+									"    pm.expect(jsonData.data.length).to.be.at.least(2);",
+									"});",
+									"",
+									"console.log('Step 8: Transaction history retrieved');",
+									"console.log('✓ Wallet tests passed!');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/wallet/transactions",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "wallet", "transactions"]
+						}
+					}
+				}
+			],
+			"description": "Complete wallet flow: balance checking, deposits, withdrawals, and transaction history."
+		},
+		{
+			"name": "Games",
+			"item": [
+				{
+					"name": "1. Register New Player",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"const timestamp = Date.now();",
+									"pm.collectionVariables.set('current_username', 'gamer_' + timestamp);",
+									"pm.collectionVariables.set('current_email', 'gamer_' + timestamp + '@example.com');"
+								],
+								"type": "text/javascript"
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Registration successful', function () {",
+									"    pm.response.to.have.status(201);",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.collectionVariables.set('player_id', jsonData.data.player_id);",
+									"});",
+									"",
+									"console.log('Step 1: Player registered for game tests');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"username\": \"{{current_username}}\",\n    \"email\": \"{{current_email}}\",\n    \"password\": \"password123\",\n    \"accept_tc\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/register",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "auth", "register"]
+						}
+					}
+				},
+				{
+					"name": "2. Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Login successful', function () {",
+									"    pm.response.to.have.status(200);",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.collectionVariables.set('token', jsonData.data.token);",
+									"});",
+									"",
+									"console.log('Step 2: Logged in successfully');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"username\": \"{{current_username}}\",\n    \"password\": \"password123\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/login",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "auth", "login"]
+						}
+					}
+				},
+				{
+					"name": "3. Deposit $100",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Deposit successful', function () {",
+									"    pm.response.to.have.status(200);",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});",
+									"",
+									"console.log('Step 3: Deposited $100 for gameplay');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"amount\": 100.00,\n    \"reference\": \"game-deposit-{{$timestamp}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/wallet/deposit",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "wallet", "deposit"]
+						}
+					}
+				},
+				{
+					"name": "4. List Games",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Games list returned', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.be.an('array');",
+									"    pm.expect(jsonData.data.length).to.be.at.least(1);",
+									"});",
+									"",
+									"pm.test('Fortune Slots available', function () {",
+									"    const jsonData = pm.response.json();",
+									"    const fortuneSlots = jsonData.data.find(g => g.id === 'fortune-slots');",
+									"    pm.expect(fortuneSlots).to.exist;",
+									"});",
+									"",
+									"console.log('Step 4: Games list retrieved');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/games",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "games"]
+						}
+					}
+				},
+				{
+					"name": "5. Get Game Details",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Game details returned', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data.name).to.eql('Fortune Slots');",
+									"});",
+									"",
+									"console.log('Step 5: Fortune Slots details retrieved');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/games/fortune-slots",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "games", "fortune-slots"]
+						}
+					}
+				},
+				{
+					"name": "6. Start Game Session",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"pm.test('Session created', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('session_id');",
+									"    pm.collectionVariables.set('game_session_id', jsonData.data.session_id);",
+									"});",
+									"",
+									"console.log('Step 6: Game session started');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/games/fortune-slots/session",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "games", "fortune-slots", "session"]
+						}
+					}
+				},
+				{
+					"name": "7. Play Game ($1.00 Wager)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Game play successful', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('cycle_id');",
+									"    pm.expect(jsonData.data).to.have.property('outcome');",
+									"});",
+									"",
+									"pm.test('Outcome has reels', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.data.outcome).to.have.property('reels');",
+									"    pm.expect(jsonData.data.outcome.reels).to.be.an('array');",
+									"});",
+									"",
+									"const jsonData = pm.response.json();",
+									"const reels = jsonData.data.outcome.reels;",
+									"console.log('Step 7: Played game - [' + reels.join(' ') + '] - Won: $' + jsonData.data.win_amount);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"session_id\": \"{{game_session_id}}\",\n    \"wager_amount\": 100\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/games/play",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "games", "play"]
+						}
+					}
+				},
+				{
+					"name": "8. Play Game ($0.50 Wager)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"const jsonData = pm.response.json();",
+									"const reels = jsonData.data.outcome.reels;",
+									"console.log('Step 8: Played game - [' + reels.join(' ') + '] - Won: $' + jsonData.data.win_amount);"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"session_id\": \"{{game_session_id}}\",\n    \"wager_amount\": 50\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/games/play",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "games", "play"]
+						}
+					}
+				},
+				{
+					"name": "9. Play Game Insufficient Balance",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 400 Bad Request', function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"",
+									"pm.test('Error for insufficient funds', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.false;",
+									"});",
+									"",
+									"console.log('Step 9: Insufficient balance correctly rejected');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"session_id\": \"{{game_session_id}}\",\n    \"wager_amount\": 1000000\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/games/play",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "games", "play"]
+						}
+					}
+				},
+				{
+					"name": "10. Play Game Below Minimum",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 400 Bad Request', function () {",
+									"    pm.response.to.have.status(400);",
+									"});",
+									"",
+									"pm.test('Error for invalid wager', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.false;",
+									"});",
+									"",
+									"console.log('Step 10: Below minimum wager correctly rejected');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"session_id\": \"{{game_session_id}}\",\n    \"wager_amount\": 1\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/games/play",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "games", "play"]
+						}
+					}
+				},
+				{
+					"name": "11. Game History",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Game history returned', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.be.an('array');",
+									"    pm.expect(jsonData.data.length).to.be.at.least(2);",
+									"});",
+									"",
+									"console.log('Step 11: Game history retrieved');",
+									"console.log('✓ Games tests passed!');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/games/history",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "games", "history"]
+						}
+					}
+				}
+			],
+			"description": "Complete game flow: browsing games, starting sessions, playing, and viewing history."
+		},
+		{
+			"name": "Complete Player Journey",
+			"item": [
+				{
+					"name": "1. Register New Player",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"const timestamp = Date.now();",
+									"pm.collectionVariables.set('current_username', 'journey_' + timestamp);",
+									"pm.collectionVariables.set('current_email', 'journey_' + timestamp + '@example.com');"
+								],
+								"type": "text/javascript"
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Registration successful', function () {",
+									"    pm.response.to.have.status(201);",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.collectionVariables.set('player_id', jsonData.data.player_id);",
+									"});",
+									"",
+									"console.log('Step 1: Player registered successfully');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"username\": \"{{current_username}}\",\n    \"email\": \"{{current_email}}\",\n    \"password\": \"securepass123\",\n    \"accept_tc\": true\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/register",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "auth", "register"]
+						}
+					}
+				},
+				{
+					"name": "2. Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Login successful', function () {",
+									"    pm.response.to.have.status(200);",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.collectionVariables.set('token', jsonData.data.token);",
+									"});",
+									"",
+									"console.log('Step 2: Logged in successfully');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"username\": \"{{current_username}}\",\n    \"password\": \"securepass123\"\n}"
 						},
 						"url": {
 							"raw": "{{base_url}}/api/v1/auth/login",
@@ -1443,10 +1521,7 @@
 									"    pm.expect(jsonData.data).to.be.an('array');",
 									"    pm.expect(jsonData.data.length).to.be.at.least(1);",
 									"    ",
-									"    console.log('Step 5: Found ' + jsonData.data.length + ' games:');",
-									"    jsonData.data.forEach(g => {",
-									"        console.log('  - ' + g.name + ' (RTP: ' + (g.theoretical_rtp * 100).toFixed(0) + '%)');",
-									"    });",
+									"    console.log('Step 5: Found ' + jsonData.data.length + ' games');",
 									"});"
 								],
 								"type": "text/javascript"
@@ -1818,4 +1893,3 @@
 		}
 	]
 }
-

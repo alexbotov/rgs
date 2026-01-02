@@ -1,0 +1,1479 @@
+{
+	"info": {
+		"_postman_id": "8ece37d9-f681-41b1-a9e5-20b40410b1d2",
+		"name": "Pateplay games API",
+		"description": "This document describes the integration API between any casino operator and Pateplay remote game server (RGS).\n\nAll URLs and example values are provided for documentation only. Don’t use them directly during development.\n\n# Flow chart\n\nExample RGS communication with operator:\n\n<img src=\"https://content.pstmn.io/6fe5f016-f364-44e7-9871-7a18dc3a770b/UkdTIGludGVncmF0aW9uIGZsb3cgY2hhcnQgMS4xLnBuZw==\" width=\"636\" height=\"488\">\n\n# Game launch\n\nPateplay games are launched in an iframe or a direct link with a static URL and some GET parameters.\n\nThe launch URLs always follow the same structure, as shown in the examples below. The \\``OPERATOR_CODE`\\` variable has to be replaced with the client's operator code, provided by Pateplay.\n\nProduction URL template:\n\n`https://OPERATOR_CODE-relay.pateplay.net/relay/?authCode=b43bf583-8362-4e0a-95da-66205b92afc2&siteCode=testbet&language=en&device=desktop&game=example-game`\n\nDev URL template:\n\n`https://OPERATOR_CODE-relay.dev.pateplay.io/relay/?authCode=b43bf583-8362-4e0a-95da-66205b92afc2&siteCode=testbet&language=en&device=desktop&game=example-game`\n\n| Parameter | Description |\n| --- | --- |\n| **authCode** | One-time authentication code that will be used to generate **sessionToken** on the backend later. |\n| **siteCode** | Unique site code, provided by Pateplay. RGS will return an error if this code does not exist. |\n| **language** _(optional)_ | Language code to render the games in. _Default: \"en\"._ |\n| **device** _(optional)_ | Device type (\"desktop\" or \"mobile\"). Will be sent back with the API calls unchanged. _Default: \"desktop\"._ |\n| **game** _(optional)_ | Unique game name, provided by Pateplay. _Default: \"lobby\"._ |\n\n# Authentication\n\nThe API authentication has 2 separate unique secrets - an **API key** and an **API secret**.\n\nThe API key is sent with every request as a header called \"x-api-key\". The API secret is never sent with any of the requests. Instead, it is used to generate a hash signature of the request body to ensure authenticity of the sender. The signature is sent by a header called \"x-api-hmac\". The signature hash is generated with HMAC SHA 256 of the request body.\n\nBesides the described security layer, the API must **NOT** be publicly accessible, but whitelisted for 2 explicit Pateplay IPs - (1 main and 1 for fallback). Communication is only done through HTTPS with min TLS 1.2.\n\n# Error Codes\n\n| **Error code** | **Description** |\n| --- | --- |\n| UNEXPECTED_ERROR | Any error that does not apply to the other codes. This will be treated as a critical integration error that will cause a withdraw/withdraw and deposit cancel, and deposit retry. |\n| NOT_AUTHORIZED | API key or HMAC hash is invalid. |\n| INVALID_AUTH_TOKEN | Auth token is invalid or already used. |\n| INVALID_SESSION_TOKEN | Session token is invalid or expired. |\n| INSUFFICIENT_BALANCE | There is not enough money in the player's balance. |\n| TRANSACTION_NOT_FOUND | RGS transaction ID not found. This may happen if a withdraw request failed before it was executed by the operator. Then the RGS will try to cancel the transaction and the operator will return this error. |\n| TRANSACTION_ALREADY_EXISTS | RGS transaction ID already exists. This may happen if the operator has executed a deposit but a network issue causes RGS to retry. Then the operator returns this error and RGS marks the transaction as OK. |\n| REALITY_CHECK _(optional)_ | This error is returned according to regulation requirements. It behaves the same as INSUFFICIENT_BALANCE and will prevent a player bet request only once. If the player makes a second request, the error does not appear. It does not cause retry. |\n| BET_LIMIT_REACHED _(optional)_ | This error is returned if the operator has a specific bet limit for the player on \"withdraw\" or \"withdraw and deposit\" requests. The error behaves as INSUFFICIENT_BALANCE and will prevent a player bet request every time. It does not cause deposit retry or withdraw cancel. |\n| BET_LIMIT_90_PERCENT _(optional)_ | This error is returned if the operator has a specific bet limit for the player on \"withdraw\" or \"withdraw and deposit\" requests. It behaves the same as INSUFFICIENT_BALANCE and will prevent a player bet request only once. If the player makes a second request, the error does not appear. It does not cause retry. |\n| LOSS_LIMIT_REACHED _(optional)_ | This error is returned if the operator has a specific loss limit for the player on \"withdraw\" or \"withdraw and deposit\" requests. The error behaves as INSUFFICIENT_BALANCE and will prevent a player bet request every time. It does not cause deposit retry or withdraw cancel. |\n| LOSS_LIMIT_90_PERCENT _(optional)_ | This error is returned if the operator has a specific loss limit for the player on \"withdraw\" or \"withdraw and deposit\" requests. It behaves the same as INSUFFICIENT_BALANCE and will prevent a player bet request only once. If the player makes a second request, the error does not appear. It does not cause retry. |\n| TIME_LIMIT_REACHED _(optional)_ | This error is returned if the operator has a specific time limit for the player on \"withdraw\" or \"withdraw and deposit\" requests. The error behaves as INSUFFICIENT_BALANCE and will prevent a player bet request every time. It does not cause deposit retry or withdraw cancel. |\n| TIME_LIMIT_90_PERCENT _(optional)_ | This error is returned if the operator has a specific time limit for the player on \"withdraw\" or \"withdraw and deposit\" requests. It behaves the same as INSUFFICIENT_BALANCE and will prevent a player bet request only once. If the player makes a second request, the error does not appear. It does not cause retry. |\n\n# Postman Collection\n\nWe have a fully supported [Postman]() collection. It is automated and works with environment variables and pre-request scripts. HMAC hash generation is automatically handled for easy testing during API development. If you are familiar with postman, this will make the integration testing completely effortless. Try it out.\n\n_Note: Headers with Api key and Api HMAC are added only in the automated postman examples with a pre-request script. If provided cURLs are used there would not be such headers in the requests._",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "21774501",
+		"_collection_link": "https://pateplay.postman.co/workspace/Team-Workspace~e6a1ca30-394f-4141-81d3-34dd0b7e83c5/collection/21774501-8ece37d9-f681-41b1-a9e5-20b40410b1d2?action=share&source=collection_link&creator=21774501"
+	},
+	"item": [
+		{
+			"name": "Authenticate",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"let responseData = JSON.parse(responseBody);\r",
+							"\r",
+							"if (responseData.result !== undefined) {\r",
+							"    responseData = responseData.result;\r",
+							"    if (responseData.sessionToken) postman.setEnvironmentVariable('wallet.sessionToken', responseData.sessionToken);\r",
+							"}\r",
+							""
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"function getBodyStringified() {\r",
+							"    const body = JSON.parse(pm.request.body.raw);    \r",
+							"    const keys = Object.keys(body);\r",
+							"    for (const key of keys) {\r",
+							"        if (body[key][0] === '{' && body[key][1] === '{' && body[key][body[key].length - 1] === '}' && body[key][body[key].length - 2] === '}') {\r",
+							"            let varName = body[key].slice(2, body[key].length - 2);\r",
+							"            body[key] = pm.variables.get(varName).toString();\r",
+							"        }\r",
+							"    }\r",
+							"    return JSON.stringify(body);\r",
+							"}\r",
+							"\r",
+							"var signBytes = CryptoJS.HmacSHA256(getBodyStringified(), pm.variables.get('rgs.apiSecret'));\r",
+							"var signHex = CryptoJS.enc.Hex.stringify(signBytes);\r",
+							"pm.request.headers.add({\r",
+							"    key: \"x-api-key\",\r",
+							"    value: pm.variables.get('rgs.apiKey')\r",
+							"});\r",
+							"pm.request.headers.add({\r",
+							"    key: \"x-api-hmac\",\r",
+							"    value: signHex\r",
+							"});\r",
+							"\r",
+							"pm.request.body.raw = JSON.stringify(JSON.parse(pm.request.body.raw));"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"authToken\": \"{{wallet.authToken}}\",\r\n    \"siteCode\": \"{{wallet.siteCode}}\",\r\n    \"deviceType\": \"{{wallet.deviceType}}\"\r\n}\r\n",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{wallet.baseUrl}}/authenticate",
+					"host": [
+						"{{wallet.baseUrl}}"
+					],
+					"path": [
+						"authenticate"
+					]
+				},
+				"description": "Create a new session token with a one time auth token.\n\nEvery time a player opens a Pateplay game on the operator's website, a new one-time **authToken** must be generated on the operator's side. The **authToken** is then passed as a get parameter in the game iframe with the Pateplay URL. Pateplay will send this token with the authenticate request to get a new authorized session token to be used throughout the rest of the session.\n\nThe **authToken** parameter must be one-time only. A second request with the same auth token must return a **INVALID_AUTH_TOKEN** error."
+			},
+			"response": [
+				{
+					"name": "Authenticate",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"authToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"deviceType\": \"desktop\"\r\n}\r\n",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "https://dev-wallet.local.pateplay.io/authenticate",
+							"protocol": "https",
+							"host": [
+								"dev-wallet",
+								"local",
+								"pateplay",
+								"io"
+							],
+							"path": [
+								"authenticate"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"result\": {\n        \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\n        \"playerId\": \"3455123\",\n        \"playerName\": \"Johnny Roselli\",\n        \"currency\": \"USD\",\n        \"country\": \"gb\",\n        \"balance\": \"10000.00\"\n    }\n}"
+				},
+				{
+					"name": "Auth error",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"authToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"deviceType\": \"desktop\"\r\n}\r\n",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "https://dev-wallet.local.pateplay.io/authenticate",
+							"protocol": "https",
+							"host": [
+								"dev-wallet",
+								"local",
+								"pateplay",
+								"io"
+							],
+							"path": [
+								"authenticate"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"error\": {\n        \"code\": \"INVALID_AUTH_TOKEN\",\n        \"message\": \"Invalid auth token.\"\n    }\n}"
+				}
+			]
+		},
+		{
+			"name": "Balance",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"function getBodyStringified() {\r",
+							"    const body = JSON.parse(pm.request.body.raw);    \r",
+							"    const keys = Object.keys(body);\r",
+							"    for (const key of keys) {\r",
+							"        if (body[key][0] === '{' && body[key][1] === '{' && body[key][body[key].length - 1] === '}' && body[key][body[key].length - 2] === '}') {\r",
+							"            let varName = body[key].slice(2, body[key].length - 2);\r",
+							"            body[key] = pm.variables.get(varName).toString();\r",
+							"        }\r",
+							"    }\r",
+							"    return JSON.stringify(body);\r",
+							"}\r",
+							"\r",
+							"var signBytes = CryptoJS.HmacSHA256(getBodyStringified(), pm.variables.get('rgs.apiSecret'));\r",
+							"var signHex = CryptoJS.enc.Hex.stringify(signBytes);\r",
+							"pm.request.headers.add({\r",
+							"    key: \"x-api-key\",\r",
+							"    value: pm.variables.get('rgs.apiKey')\r",
+							"});\r",
+							"pm.request.headers.add({\r",
+							"    key: \"x-api-hmac\",\r",
+							"    value: signHex\r",
+							"});\r",
+							"\r",
+							"pm.request.body.raw = JSON.stringify(JSON.parse(pm.request.body.raw));"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"sessionToken\": \"{{wallet.sessionToken}}\",\r\n    \"siteCode\": \"{{wallet.siteCode}}\",\r\n    \"playerId\": \"{{wallet.playerId}}\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{wallet.baseUrl}}/balance",
+					"host": [
+						"{{wallet.baseUrl}}"
+					],
+					"path": [
+						"balance"
+					]
+				},
+				"description": "Get the player's current balance."
+			},
+			"response": [
+				{
+					"name": "Balance",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/balance",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"balance"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"result\": {\n        \"balance\": \"10000.00\"\n    }\n}"
+				},
+				{
+					"name": "Session error",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/balance",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"balance"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"error\": {\n        \"code\": \"INVALID_SESSION_TOKEN\",\n        \"message\": \"Invalid session token.\"\n    }\n}"
+				}
+			]
+		},
+		{
+			"name": "Init game",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"let responseData = JSON.parse(responseBody);\r",
+							"const requestData = JSON.parse(pm.request.body.raw);\r",
+							"\r",
+							"if (responseData.result !== undefined) {\r",
+							"    responseData = responseData.result;\r",
+							"    \r",
+							"    if (responseData.sessionToken) {\r",
+							"        postman.setEnvironmentVariable('wallet.sessionToken', responseData.sessionToken);  \r",
+							"        postman.setEnvironmentVariable('wallet.gameName', requestData.gameName);\r",
+							"    } \r",
+							"}\r",
+							"\r",
+							""
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"function getBodyStringified() {\r",
+							"    const body = JSON.parse(pm.request.body.raw);    \r",
+							"    const keys = Object.keys(body);\r",
+							"    for (const key of keys) {\r",
+							"        if (body[key][0] === '{' && body[key][1] === '{' && body[key][body[key].length - 1] === '}' && body[key][body[key].length - 2] === '}') {\r",
+							"            let varName = body[key].slice(2, body[key].length - 2);\r",
+							"            body[key] = pm.variables.get(varName).toString();\r",
+							"        }\r",
+							"    }\r",
+							"    return JSON.stringify(body);\r",
+							"}\r",
+							"\r",
+							"var signBytes = CryptoJS.HmacSHA256(getBodyStringified(), pm.variables.get('rgs.apiSecret'));\r",
+							"var signHex = CryptoJS.enc.Hex.stringify(signBytes);\r",
+							"pm.request.headers.add({\r",
+							"    key: \"x-api-key\",\r",
+							"    value: pm.variables.get('rgs.apiKey')\r",
+							"});\r",
+							"pm.request.headers.add({\r",
+							"    key: \"x-api-hmac\",\r",
+							"    value: signHex\r",
+							"});\r",
+							"\r",
+							"pm.request.body.raw = JSON.stringify(JSON.parse(pm.request.body.raw));"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"sessionToken\": \"{{wallet.sessionToken}}\",\r\n    \"siteCode\": \"{{wallet.siteCode}}\",\r\n    \"playerId\": \"{{wallet.playerId}}\",\r\n    \"gameName\": \"{{wallet.gameName}}\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{wallet.baseUrl}}/init-game",
+					"host": [
+						"{{wallet.baseUrl}}"
+					],
+					"path": [
+						"init-game"
+					]
+				},
+				"description": "Start a new game session. Update the session token if required.\n\nPateplay will send this request every time the player opens a game. This is called a new \"game session\". The operator (this is optional) can now return a new sessionToken specific to this game session. If the operator does not require a change of the session token on game init, the current session token must be returned instead."
+			},
+			"response": [
+				{
+					"name": "Init game",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\",\r\n    \"gameName\": \"test-game\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/init-game",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"init-game"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"result\": {\n        \"sessionToken\": \"9eff4993-c91b-4e40-af40-8c965b55739d\",\n        \"balance\": \"10000.00\"\n    }\n}"
+				},
+				{
+					"name": "Session error",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\",\r\n    \"gameName\": \"test-game\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/init-game",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"init-game"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"error\": {\n        \"code\": \"INVALID_SESSION_TOKEN\",\n        \"message\": \"Invalid session token.\"\n    }\n}"
+				}
+			]
+		},
+		{
+			"name": "Withdraw",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"const responseData = JSON.parse(responseBody);\r",
+							"\r",
+							"if (responseData.result !== undefined) {\r",
+							"    const requestData = JSON.parse(pm.request.body.raw);\r",
+							"\r",
+							"    postman.setEnvironmentVariable('wallet.rgsRoundId', parseInt(requestData.rgsRoundId || '0') + 1);\r",
+							"    postman.setEnvironmentVariable('wallet.rgsTransactionId', parseInt(requestData.rgsTransactionId || '0') + 1);\r",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"function getBodyStringified() {\r",
+							"    const body = JSON.parse(pm.request.body.raw);    \r",
+							"    const keys = Object.keys(body);\r",
+							"    for (const key of keys) {\r",
+							"        if (body[key][0] === '{' && body[key][1] === '{' && body[key][body[key].length - 1] === '}' && body[key][body[key].length - 2] === '}') {\r",
+							"            let varName = body[key].slice(2, body[key].length - 2);\r",
+							"            body[key] = pm.variables.get(varName).toString();\r",
+							"        }\r",
+							"    }\r",
+							"    return JSON.stringify(body);\r",
+							"}\r",
+							"\r",
+							"var signBytes = CryptoJS.HmacSHA256(getBodyStringified(), pm.variables.get('rgs.apiSecret'));\r",
+							"var signHex = CryptoJS.enc.Hex.stringify(signBytes);\r",
+							"pm.request.headers.add({\r",
+							"    key: \"x-api-key\",\r",
+							"    value: pm.variables.get('rgs.apiKey')\r",
+							"});\r",
+							"pm.request.headers.add({\r",
+							"    key: \"x-api-hmac\",\r",
+							"    value: signHex\r",
+							"});\r",
+							"\r",
+							"pm.request.body.raw = JSON.stringify(JSON.parse(pm.request.body.raw));"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"sessionToken\": \"{{wallet.sessionToken}}\",\r\n    \"siteCode\": \"{{wallet.siteCode}}\",\r\n    \"playerId\": \"{{wallet.playerId}}\",\r\n    \"currency\": \"{{wallet.currency}}\",\r\n    \"rgsRoundId\": \"{{wallet.rgsRoundId}}\",\r\n    \"rgsTransactionId\": \"{{wallet.rgsTransactionId}}\",\r\n    \"gameName\": \"{{wallet.gameName}}\",\r\n    \"amount\": \"100.01\",\r\n    \"jackpotContribution\": \"0.01\",\r\n    \"reason\": \"round_start\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{wallet.baseUrl}}/withdraw",
+					"host": [
+						"{{wallet.baseUrl}}"
+					],
+					"path": [
+						"withdraw"
+					]
+				},
+				"description": "Withdraw money from the player's balance.\n\nPateplay sends this request when the player wants to bet in a new round. Same applies for an existing round in games like blackjack.\n\nIf there is not enough money in the player's balance, an **INSUFFICIENT_BALANCE** error must be returned.\n\nIf the same rgsTransactionId has already been processed by the operator, a **TRANSACTION_ALREADY_EXISTS** error must be returned with the **transaction id** in the error data. Check Transaction error example for more info.\n\nNote: Currently our api sends only \"round_start\" for withdraw reason but has the option the send \"round_continue\" for multi-bet games (Blackjack for example) so both should be supported."
+			},
+			"response": [
+				{
+					"name": "Withdraw",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\",\r\n    \"currency\": \"USD\",\r\n    \"rgsRoundId\": \"123323124\",\r\n    \"rgsTransactionId\": \"534123664\",\r\n    \"gameName\": \"test-game\",\r\n    \"amount\": \"100.01\",\r\n    \"jackpotContribution\": \"0.01\",\r\n    \"reason\": \"round_start\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/withdraw",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"withdraw"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"result\": {\n        \"transactionId\": \"7f050839-efd0-40d8-9d14-0ad257b1c518\",\n        \"balance\": \"9899.99\"\n    }\n}"
+				},
+				{
+					"name": "Session error",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\",\r\n    \"currency\": \"USD\",\r\n    \"rgsRoundId\": \"123323124\",\r\n    \"rgsTransactionId\": \"534123664\",\r\n    \"gameName\": \"test-game\",\r\n    \"amount\": \"100.01\",\r\n    \"jackpotContribution\": \"0.01\",\r\n    \"reason\": \"round_start\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/withdraw",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"withdraw"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"error\": {\n        \"code\": \"INVALID_SESSION_TOKEN\",\n        \"message\": \"Invalid session token.\"\n    }\n}"
+				},
+				{
+					"name": "Balance error",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\",\r\n    \"currency\": \"USD\",\r\n    \"rgsRoundId\": \"123323124\",\r\n    \"rgsTransactionId\": \"534123664\",\r\n    \"gameName\": \"test-game\",\r\n    \"amount\": \"100.01\",\r\n    \"jackpotContribution\": \"0.01\",\r\n    \"reason\": \"round_start\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/withdraw",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"withdraw"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"error\": {\n        \"code\": \"INSUFFICIENT_BALANCE\",\n        \"message\": \"Insufficient balance.\"\n    }\n}"
+				},
+				{
+					"name": "Transaction error",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\",\r\n    \"currency\": \"USD\",\r\n    \"rgsRoundId\": \"123323124\",\r\n    \"rgsTransactionId\": \"534123664\",\r\n    \"gameName\": \"test-game\",\r\n    \"amount\": \"100.01\",\r\n    \"jackpotContribution\": \"0.01\",\r\n    \"reason\": \"round_start\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/withdraw",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"withdraw"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"error\": {\n        \"code\": \"TRANSACTION_ALREADY_EXISTS\",\n        \"message\": \"Transaction already exists.\",\n        \"data\": {\n            \"transactionId\": \"7f050839-efd0-40d8-9d14-0ad257b1c518\"\n        }\n    }\n}"
+				}
+			]
+		},
+		{
+			"name": "Deposit",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"const responseData = JSON.parse(responseBody);\r",
+							"\r",
+							"if (responseData.result !== undefined) {\r",
+							"    const requestData = JSON.parse(pm.request.body.raw);\r",
+							"\r",
+							"    postman.setEnvironmentVariable('wallet.rgsRoundId', parseInt(requestData.rgsRoundId || '0') + 1);\r",
+							"    postman.setEnvironmentVariable('wallet.rgsTransactionId', parseInt(requestData.rgsTransactionId || '0') + 1);\r",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"function getBodyStringified() {\r",
+							"    const body = JSON.parse(pm.request.body.raw);    \r",
+							"    const keys = Object.keys(body);\r",
+							"    for (const key of keys) {\r",
+							"        if (body[key][0] === '{' && body[key][1] === '{' && body[key][body[key].length - 1] === '}' && body[key][body[key].length - 2] === '}') {\r",
+							"            let varName = body[key].slice(2, body[key].length - 2);\r",
+							"            body[key] = pm.variables.get(varName).toString();\r",
+							"        }\r",
+							"    }\r",
+							"    return JSON.stringify(body);\r",
+							"}\r",
+							"\r",
+							"var signBytes = CryptoJS.HmacSHA256(getBodyStringified(), pm.variables.get('rgs.apiSecret'));\r",
+							"var signHex = CryptoJS.enc.Hex.stringify(signBytes);\r",
+							"pm.request.headers.add({\r",
+							"    key: \"x-api-key\",\r",
+							"    value: pm.variables.get('rgs.apiKey')\r",
+							"});\r",
+							"pm.request.headers.add({\r",
+							"    key: \"x-api-hmac\",\r",
+							"    value: signHex\r",
+							"});\r",
+							"\r",
+							"pm.request.body.raw = JSON.stringify(JSON.parse(pm.request.body.raw));"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"sessionToken\": \"{{wallet.sessionToken}}\",\r\n    \"siteCode\": \"{{wallet.siteCode}}\",\r\n    \"playerId\": \"{{wallet.playerId}}\",\r\n    \"gameName\": \"{{wallet.gameName}}\",\r\n    \"currency\": \"{{wallet.currency}}\",\r\n    \"rgsRoundId\": \"{{wallet.rgsRoundId}}\",\r\n    \"rgsTransactionId\": \"{{wallet.rgsTransactionId}}\",\r\n    \"amount\": \"100.01\",\r\n    \"isJackpotWin\": false,\r\n    \"reason\": \"round_end\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{wallet.baseUrl}}/deposit",
+					"host": [
+						"{{wallet.baseUrl}}"
+					],
+					"path": [
+						"deposit"
+					]
+				},
+				"description": "Deposit money to the player's balance.\n\nPateplay sends this request when the player wins in a game, bonus or jackpot.\n\nIf the same rgsTransactionId has already been processed by the operator, a **TRANSACTION_ALREADY_EXISTS** error must be returned with the **transaction id** in the error data. Check Transaction error example for more info.\n\nNote: We can have deposit transactions with amount 0 which is in case of a lost win in a cards double game.\n\nNote 2: Currently our api sends either \"round_end\" or \"round_continue\" for deposit reason based on whether jackpot has been won or not (or it's a multi-bet game with multiple wins). Both should be supported. If a deposit transaction with round_end is sent no further transactions should be allowed on the round. Examples:\n\n- In a round with payout and no jackpot win we send deposit with reason \"round_end\".\n- In a round with payout and jackpot win we send 2 deposit transactions: First to collect the payout from the round with reason \"round_continue\" and second to collect the jackpot payout with reason \"round_end\"."
+			},
+			"response": [
+				{
+					"name": "Deposit",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\",\r\n    \"gameName\": \"test-game\",\r\n    \"currency\": \"USD\",\r\n    \"rgsRoundId\": \"123323124\",\r\n    \"rgsTransactionId\": \"534123665\",\r\n    \"amount\": \"100.01\",\r\n    \"isJackpotWin\": false,\r\n    \"reason\": \"round_end\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/deposit",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"deposit"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"result\": {\n        \"transactionId\": \"0caa87d9-a7ce-42e5-8814-a9dce9c7cdb7\",\n        \"balance\": \"10000.00\"\n    }\n}"
+				},
+				{
+					"name": "Session error",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\",\r\n    \"gameName\": \"test-game\",\r\n    \"currency\": \"USD\",\r\n    \"rgsRoundId\": \"123323124\",\r\n    \"rgsTransactionId\": \"534123665\",\r\n    \"amount\": \"100.01\",\r\n    \"isJackpotWin\": false,\r\n    \"reason\": \"round_end\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/deposit",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"deposit"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"error\": {\n        \"code\": \"INVALID_SESSION_TOKEN\",\n        \"message\": \"Invalid session token.\"\n    }\n}"
+				},
+				{
+					"name": "Transaction error",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\",\r\n    \"gameName\": \"test-game\",\r\n    \"currency\": \"USD\",\r\n    \"rgsRoundId\": \"123323124\",\r\n    \"rgsTransactionId\": \"534123665\",\r\n    \"amount\": \"100.01\",\r\n    \"isJackpotWin\": false,\r\n    \"reason\": \"round_end\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/deposit",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"deposit"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"error\": {\n        \"code\": \"TRANSACTION_ALREADY_EXISTS\",\n        \"message\": \"Transaction already exists.\",\n        \"data\": {\n            \"transactionId\": \"7f050839-efd0-40d8-9d14-0ad257b1c518\"\n        }\n    }\n}"
+				}
+			]
+		},
+		{
+			"name": "Withdraw and deposit",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"const responseData = JSON.parse(responseBody).result;\r",
+							"\r",
+							"if (responseData !== undefined) {\r",
+							"    const requestData = JSON.parse(pm.request.body.raw);\r",
+							"\r",
+							"    postman.setEnvironmentVariable('wallet.rgsRoundId', parseInt(requestData.rgsRoundId || '0') + 1);\r",
+							"    postman.setEnvironmentVariable('wallet.rgsTransactionId', parseInt(requestData.rgsWithdrawTransactionId || '0') + 1);\r",
+							"}\r",
+							""
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"function getBodyStringified() {\r",
+							"    const body = JSON.parse(pm.request.body.raw);    \r",
+							"    const keys = Object.keys(body);\r",
+							"    for (const key of keys) {\r",
+							"        if (body[key][0] === '{' && body[key][1] === '{' && body[key][body[key].length - 1] === '}' && body[key][body[key].length - 2] === '}') {\r",
+							"            let varName = body[key].slice(2, body[key].length - 2);\r",
+							"            body[key] = pm.variables.get(varName).toString();\r",
+							"        }\r",
+							"    }\r",
+							"    return JSON.stringify(body);\r",
+							"}\r",
+							"\r",
+							"var signBytes = CryptoJS.HmacSHA256(getBodyStringified(), pm.variables.get('rgs.apiSecret'));\r",
+							"var signHex = CryptoJS.enc.Hex.stringify(signBytes);\r",
+							"pm.request.headers.add({\r",
+							"    key: \"x-api-key\",\r",
+							"    value: pm.variables.get('rgs.apiKey')\r",
+							"});\r",
+							"pm.request.headers.add({\r",
+							"    key: \"x-api-hmac\",\r",
+							"    value: signHex\r",
+							"});\r",
+							"\r",
+							"pm.request.body.raw = JSON.stringify(JSON.parse(pm.request.body.raw));"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"sessionToken\": \"{{wallet.sessionToken}}\",\r\n    \"siteCode\": \"{{wallet.siteCode}}\",\r\n    \"playerId\": \"{{wallet.playerId}}\",\r\n    \"gameName\": \"{{wallet.gameName}}\",\r\n    \"currency\": \"{{wallet.currency}}\",\r\n    \"rgsRoundId\": \"{{wallet.rgsRoundId}}\",\r\n    \"rgsWithdrawTransactionId\": \"{{wallet.rgsTransactionId}}\",\r\n    \"rgsDepositTransactionId\": \"{{wallet.rgsTransactionId}}\",\r\n    \"withdrawAmount\": \"1.00\",\r\n    \"depositAmount\": \"0.00\",\r\n    \"jackpotContribution\": \"0.01\",\r\n    \"withdrawReason\": \"round_start\",\r\n    \"depositReason\": \"round_end\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{wallet.baseUrl}}/withdraw-and-deposit",
+					"host": [
+						"{{wallet.baseUrl}}"
+					],
+					"path": [
+						"withdraw-and-deposit"
+					]
+				},
+				"description": "Execute withdraw and deposit in a single request.\n\nPateplay will send this request whenever it is possible to send both at once. This only happens on \"no win\" rounds where the deposit transaction is with amount 0.\n\nIf the same rgsTransactionId has already been processed by the operator, a **TRANSACTION_ALREADY_EXISTS** error must be returned with both the **withdraw transaction id** and **deposit transaction id** in the error data. Check Transaction error example for more info.\n\nNote: Currently our api sends only \"round_start\" for the withdraw reason and for the deposit it could be either \"round_end\" or \"round_continue\" based on whether jackpot has been won or not (or it's a multi-bet game with multiple rounds/wins). Both deposit reasons should be supported. If a deposit transaction with round_end is sent no further transactions should be allowed on the round. Examples:\n\n- In a round without payout and no jackpot win we send \"round_start\" for withdraw reason and \"round_end\" for depositReason.\n- In a round without payout and jackpot win we send \"round_start\" for withdraw reason and \"round_continue\" for depositReason."
+			},
+			"response": [
+				{
+					"name": "Withdraw and deposit",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\",\r\n    \"gameName\": \"test-game\",\r\n    \"currency\": \"USD\",\r\n    \"rgsRoundId\": \"123323125\",\r\n    \"rgsWithdrawTransactionId\": \"534123666\",\r\n    \"rgsDepositTransactionId\": \"534123667\",\r\n    \"withdrawAmount\": \"1.00\",\r\n    \"depositAmount\": \"0.00\",\r\n    \"jackpotContribution\": \"0.01\",\r\n    \"withdrawReason\": \"round_start\",\r\n    \"depositReason\": \"round_end\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/withdraw-and-deposit",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"withdraw-and-deposit"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"result\": {\n        \"balance\": \"10011.00\",\n        \"withdrawTransactionId\": \"6f1c03c5-79a5-4797-8c4b-da6781752a16\",\n        \"depositTransactionId\": \"3d52c3ea-32fe-4d1c-a2bb-1498201481d2\"\n    }\n}"
+				},
+				{
+					"name": "Session error",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\",\r\n    \"gameName\": \"test-game\",\r\n    \"currency\": \"USD\",\r\n    \"rgsRoundId\": \"123323125\",\r\n    \"rgsWithdrawTransactionId\": \"534123666\",\r\n    \"rgsDepositTransactionId\": \"534123667\",\r\n    \"withdrawAmount\": \"1.00\",\r\n    \"depositAmount\": \"0.00\",\r\n    \"jackpotContribution\": \"0.01\",\r\n    \"withdrawReason\": \"round_start\",\r\n    \"depositReason\": \"round_end\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/withdraw-and-deposit",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"withdraw-and-deposit"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"error\": {\n        \"code\": \"INVALID_SESSION_TOKEN\",\n        \"message\": \"Invalid session token.\"\n    }\n}"
+				},
+				{
+					"name": "Balance error",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\",\r\n    \"gameName\": \"test-game\",\r\n    \"currency\": \"USD\",\r\n    \"rgsRoundId\": \"123323125\",\r\n    \"rgsWithdrawTransactionId\": \"534123666\",\r\n    \"rgsDepositTransactionId\": \"534123667\",\r\n    \"withdrawAmount\": \"1.00\",\r\n    \"depositAmount\": \"0.00\",\r\n    \"jackpotContribution\": \"0.01\",\r\n    \"withdrawReason\": \"round_start\",\r\n    \"depositReason\": \"round_end\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/withdraw-and-deposit",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"withdraw-and-deposit"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"error\": {\n        \"code\": \"INSUFFICIENT_BALANCE\",\n        \"message\": \"Insufficient balance.\"\n    }\n}"
+				},
+				{
+					"name": "Transaction error",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\",\r\n    \"gameName\": \"test-game\",\r\n    \"currency\": \"USD\",\r\n    \"rgsRoundId\": \"123323125\",\r\n    \"rgsWithdrawTransactionId\": \"534123666\",\r\n    \"rgsDepositTransactionId\": \"534123667\",\r\n    \"withdrawAmount\": \"1.00\",\r\n    \"depositAmount\": \"0.00\",\r\n    \"jackpotContribution\": \"0.01\",\r\n    \"withdrawReason\": \"round_start\",\r\n    \"depositReason\": \"round_end\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/withdraw-and-deposit",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"withdraw-and-deposit"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"error\": {\n        \"code\": \"TRANSACTION_ALREADY_EXISTS\",\n        \"message\": \"Transaction already exists.\",\n        \"data\": {\n            \"withdrawTransactionId\": \"7f050839-efd0-40d8-9d14-0ad257b1c518\",\n            \"depositTransactionId\": \"e1d5fe36-480f-4a90-8993-cd364b28b156\"\n        }\n    }\n}"
+				}
+			]
+		},
+		{
+			"name": "Cancel",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"const responseData = JSON.parse(responseBody);\r",
+							"\r",
+							"if (responseData.result !== undefined) {\r",
+							"    const requestData = JSON.parse(pm.request.body.raw);\r",
+							"\r",
+							"    postman.setEnvironmentVariable('wallet.rgsRoundId', parseInt(requestData.rgsRoundId || '0') + 1);\r",
+							"    postman.setEnvironmentVariable('wallet.rgsTransactionId', parseInt(requestData.rgsTransactionId || '0') + 1);\r",
+							"}"
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"function getBodyStringified() {\r",
+							"    const body = JSON.parse(pm.request.body.raw);    \r",
+							"    const keys = Object.keys(body);\r",
+							"    for (const key of keys) {\r",
+							"        if (body[key][0] === '{' && body[key][1] === '{' && body[key][body[key].length - 1] === '}' && body[key][body[key].length - 2] === '}') {\r",
+							"            let varName = body[key].slice(2, body[key].length - 2);\r",
+							"            body[key] = pm.variables.get(varName).toString();\r",
+							"        }\r",
+							"    }\r",
+							"    return JSON.stringify(body);\r",
+							"}\r",
+							"\r",
+							"var signBytes = CryptoJS.HmacSHA256(getBodyStringified(), pm.variables.get('rgs.apiSecret'));\r",
+							"var signHex = CryptoJS.enc.Hex.stringify(signBytes);\r",
+							"pm.request.headers.add({\r",
+							"    key: \"x-api-key\",\r",
+							"    value: pm.variables.get('rgs.apiKey')\r",
+							"});\r",
+							"pm.request.headers.add({\r",
+							"    key: \"x-api-hmac\",\r",
+							"    value: signHex\r",
+							"});\r",
+							"\r",
+							"pm.request.body.raw = JSON.stringify(JSON.parse(pm.request.body.raw));"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"sessionToken\": \"{{wallet.sessionToken}}\",\r\n    \"siteCode\": \"{{wallet.siteCode}}\",\r\n    \"playerId\": \"{{wallet.playerId}}\",\r\n    \"rgsRoundId\": \"{{wallet.rgsRoundId}}\",\r\n    \"rgsTransactionId\": \"{{wallet.rgsTransactionId}}\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{wallet.baseUrl}}/cancel",
+					"host": [
+						"{{wallet.baseUrl}}"
+					],
+					"path": [
+						"cancel"
+					]
+				},
+				"description": "Cancel a failed withdraw request or a failed deposit on a no win round (deposit transaction with amount 0).\n\nPateplay will send this request every time the withdraw/deposit request receives an unknown error code, unexpected error or network error.\n\nIn case the transaction doesn't exist on operator side, a **TRANSACTION_NOT_FOUND** error must be returned. Check Transaction error example for more info."
+			},
+			"response": [
+				{
+					"name": "Cancel",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\",\r\n    \"rgsRoundId\": \"123323124\",\r\n    \"rgsTransactionId\": \"534123664\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/cancel",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"cancel"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"result\": {\n        \"transactionId\": \"7f050839-efd0-40d8-9d14-0ad257b1c518\"\n    }\n}"
+				},
+				{
+					"name": "Transaction error",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"sessionToken\": \"5dc25ebe-4d95-49a3-8d45-f41b8a587e0f\",\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\",\r\n    \"rgsRoundId\": \"123323124\",\r\n    \"rgsTransactionId\": \"534123664\"\r\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/cancel",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"cancel"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"error\": {\n        \"code\": \"TRANSACTION_NOT_FOUND\",\n        \"message\": \"Transaction not found.\"\n    }\n}"
+				}
+			]
+		},
+		{
+			"name": "Create auth token",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"let responseData = JSON.parse(responseBody);\r",
+							"\r",
+							"if (responseData.result !== undefined) {\r",
+							"    responseData = responseData.result;\r",
+							"    postman.setEnvironmentVariable('wallet.authToken', responseData.authToken);\r",
+							"    \r",
+							"    if (responseData.playerName !== undefined) postman.setEnvironmentVariable('wallet.playerName', responseData.playerName);\r",
+							"    if (responseData.playerId !== undefined) postman.setEnvironmentVariable('wallet.playerId', responseData.playerId);\r",
+							"    if (responseData.currency !== undefined) postman.setEnvironmentVariable('wallet.currency', responseData.currency);\r",
+							"}\r",
+							""
+						],
+						"type": "text/javascript"
+					}
+				},
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"function getBodyStringified() {\r",
+							"    const body = JSON.parse(pm.request.body.raw);    \r",
+							"    const keys = Object.keys(body);\r",
+							"    for (const key of keys) {\r",
+							"        if (body[key][0] === '{' && body[key][1] === '{' && body[key][body[key].length - 1] === '}' && body[key][body[key].length - 2] === '}') {\r",
+							"            let varName = body[key].slice(2, body[key].length - 2);\r",
+							"            body[key] = pm.variables.get(varName).toString();\r",
+							"        }\r",
+							"    }\r",
+							"    return JSON.stringify(body);\r",
+							"}\r",
+							"\r",
+							"var signBytes = CryptoJS.HmacSHA256(getBodyStringified(), pm.variables.get('rgs.apiSecret'));\r",
+							"var signHex = CryptoJS.enc.Hex.stringify(signBytes);\r",
+							"pm.request.headers.add({\r",
+							"    key: \"x-api-key\",\r",
+							"    value: pm.variables.get('rgs.apiKey')\r",
+							"});\r",
+							"pm.request.headers.add({\r",
+							"    key: \"x-api-hmac\",\r",
+							"    value: signHex\r",
+							"});\r",
+							"\r",
+							"pm.request.body.raw = JSON.stringify(JSON.parse(pm.request.body.raw));"
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"siteCode\": \"{{wallet.siteCode}}\",\r\n    \"playerId\": \"{{wallet.playerId}}\",\r\n    \"playerName\": \"{{wallet.playerName}}\",\r\n    \"currency\": \"{{wallet.currency}}\",\r\n    \"balance\": \"{{wallet.balance}}\",\r\n    \"country\": \"{{wallet.country}}\"\r\n}\r\n",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{wallet.baseUrl}}/auth-token",
+					"host": [
+						"{{wallet.baseUrl}}"
+					],
+					"path": [
+						"auth-token"
+					]
+				},
+				"description": "Create a new test player or find and existing one and return an active auth token. If the casino platform supports test players, this method must only work with test player IDs, and be disabled for real accounts.\n\n**This is ONLY a debug method and must be disabled in production.** We use it to run automated tests on the integration without going to the casino website."
+			},
+			"response": [
+				{
+					"name": "Existing test user auth token",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"siteCode\": \"testbet\",\r\n    \"playerId\": \"3455123\"\r\n}\r\n",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/auth-token",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"auth-token"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"result\": {\n        \"playerId\": \"3455123\",\n        \"playerName\": \"Johnny Roselli\",\n        \"currency\": \"USD\",\n        \"country\": \"gb\",\n        \"balance\": \"10000.00\",\n        \"authToken\": \"4df543e0-7927-4ff1-b273-b7aa785c83c8\"\n    }\n}"
+				},
+				{
+					"name": "New test user auth token",
+					"originalRequest": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\r\n    \"siteCode\": \"testbet\",\r\n    \"playerName\": \"Johnny Roselli\",\r\n    \"currency\": \"USD\",\r\n    \"balance\": \"10000.00\",\r\n    \"country\": \"gb\"\r\n}\r\n",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{wallet.baseUrl}}/auth-token",
+							"host": [
+								"{{wallet.baseUrl}}"
+							],
+							"path": [
+								"auth-token"
+							]
+						}
+					},
+					"status": "OK",
+					"code": 200,
+					"_postman_previewlanguage": "json",
+					"header": [
+						{
+							"key": "Content-Type",
+							"value": "application/json",
+							"name": "Content-Type",
+							"description": "",
+							"type": "text"
+						}
+					],
+					"cookie": [],
+					"body": "{\n    \"result\": {\n        \"playerId\": \"3455123\",\n        \"playerName\": \"Johnny Roselli\",\n        \"currency\": \"USD\",\n        \"country\": \"gb\",\n        \"balance\": \"10000.00\",\n        \"authToken\": \"4df543e0-7927-4ff1-b273-b7aa785c83c8\"\n    }\n}"
+				}
+			]
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					"var signBytes = CryptoJS.HmacSHA256(pm.request.body.raw, pm.variables.get('wallet.apiSecret'));",
+					"var signHex = CryptoJS.enc.Hex.stringify(signBytes);",
+					"",
+					"pm.variables.set('wallet.apiHmac', signHex);",
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	]
+}
