@@ -129,6 +129,14 @@ Convert only at API boundaries using `Money.Float64()` and `domain.NewMoney()`.
 
 - **Homebrew installations**: User will grant permissions for any `brew install` commands (use `required_permissions: ["all"]`)
 
+## Postman Collections Sync
+
+When `tests/integration/integration_test.go` is modified, **automatically update** the Postman collection files to stay in sync:
+- `tests/postman/RGS_Collection.postman_collection.json` - Update test cases to match integration tests
+- `tests/postman/RGS_Local.postman_environment.json` - Update environment variables as needed
+
+This ensures manual API testing via Postman mirrors the automated integration tests.
+
 ## GLI-19 Compliance Reminders
 
 - All game outcomes must use cryptographically secure RNG

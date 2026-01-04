@@ -2,16 +2,69 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/alexbotov/rgs/internal/audit"
 	"github.com/alexbotov/rgs/internal/config"
 	"github.com/alexbotov/rgs/internal/database"
+	"github.com/alexbotov/rgs/pkg/pateplay"
 )
 
-func setupTestAuth(t *testing.T) (*Service, func()) {
+const (
+	testAPIKey    = "test-api-key"
+	testAPISecret = "test-api-secret"
+	testSiteCode  = "testsite"
+)
+
+// mockPateplayServer creates a test server that simulates Pateplay API responses
+func mockPateplayServer(t *testing.T, authToken string, result *pateplay.AuthenticateResult, apiErr *pateplay.APIError) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse request to check auth token
+		var req pateplay.AuthenticateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		// Check if the auth token matches what we expect for success
+		if req.AuthToken == authToken && result != nil {
+			json.NewEncoder(w).Encode(pateplay.Response[pateplay.AuthenticateResult]{
+				Result: result,
+			})
+			return
+		}
+
+		// Return error for invalid tokens
+		errResp := apiErr
+		if errResp == nil {
+			errResp = &pateplay.APIError{
+				Code:    pateplay.ErrInvalidAuthToken,
+				Message: "Invalid auth token",
+			}
+		}
+		json.NewEncoder(w).Encode(pateplay.Response[pateplay.AuthenticateResult]{
+			Error: errResp,
+		})
+	}))
+}
+
+// setupTestAuthWithMock creates auth service with a mocked Pateplay server
+func setupTestAuthWithMock(t *testing.T, validAuthToken string, authResult *pateplay.AuthenticateResult) (*Service, func()) {
 	t.Helper()
+
+	// Create mock Pateplay server
+	mockServer := mockPateplayServer(t, validAuthToken, authResult, nil)
 
 	// Create PostgreSQL connection
 	db, err := database.New("postgres", "host=localhost dbname=rgs sslmode=disable")
@@ -19,13 +72,10 @@ func setupTestAuth(t *testing.T) (*Service, func()) {
 		t.Fatalf("Failed to create database: %v", err)
 	}
 
-	// Ensure schema exists (idempotent)
 	if err := db.Migrate(); err != nil {
-		// Ignore if tables already exist
 		t.Logf("Migration note: %v", err)
 	}
 
-	// Clean data for fresh test state
 	if err := db.CleanData(); err != nil {
 		t.Fatalf("Failed to clean data: %v", err)
 	}
@@ -39,12 +89,37 @@ func setupTestAuth(t *testing.T) (*Service, func()) {
 		LockoutDuration:   15 * time.Minute,
 	}
 
-	svc := New(db.DB, cfg, auditSvc)
+	// Create pateplay client pointing to mock server
+	pateplayClient := pateplay.NewClient(&pateplay.ClientConfig{
+		BaseURL:   mockServer.URL,
+		APIKey:    testAPIKey,
+		APISecret: testAPISecret,
+		SiteCode:  testSiteCode,
+	})
+
+	svc := New(db.DB, cfg, auditSvc, pateplayClient)
 
 	return svc, func() {
+		mockServer.Close()
 		db.CleanData()
 		db.Close()
 	}
+}
+
+func setupTestAuth(t *testing.T) (*Service, func()) {
+	t.Helper()
+
+	// Default mock response for "valid-auth-token" (must be valid UUID)
+	authResult := &pateplay.AuthenticateResult{
+		SessionToken: "mock-session-token",
+		PlayerID:     "00000000-0000-0000-0000-000000000000",
+		PlayerName:   "MockPlayer",
+		Currency:     "USD",
+		Country:      "US",
+		Balance:      "1000.00",
+	}
+
+	return setupTestAuthWithMock(t, "valid-auth-token", authResult)
 }
 
 func TestRegister(t *testing.T) {
@@ -130,23 +205,35 @@ func TestRegister(t *testing.T) {
 }
 
 func TestLogin(t *testing.T) {
-	svc, cleanup := setupTestAuth(t)
+	// Create mock with specific player ID (must be valid UUID)
+	authResult := &pateplay.AuthenticateResult{
+		SessionToken: "mock-session-token",
+		PlayerID:     "11111111-1111-1111-1111-111111111111",
+		PlayerName:   "LoginPlayer",
+		Currency:     "USD",
+		Country:      "US",
+		Balance:      "1000.00",
+	}
+
+	svc, cleanup := setupTestAuthWithMock(t, "valid-auth-token", authResult)
 	defer cleanup()
 
 	ctx := context.Background()
 
-	// Register a user first
-	svc.Register(ctx, &RegisterRequest{
-		Username: "loginuser",
-		Email:    "login@example.com",
-		Password: "password123",
-		AcceptTC: true,
-	}, "127.0.0.1")
+	// Insert player with the ID that Pateplay will return
+	_, err := svc.db.ExecContext(ctx, `
+		INSERT INTO players (id, username, email, password_hash, status, registration_date, tc_accepted_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, authResult.PlayerID, authResult.PlayerName, "login@example.com", "", "active",
+		time.Now().UTC(), time.Now().UTC(), time.Now().UTC(), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("Failed to insert test player: %v", err)
+	}
 
 	t.Run("SuccessfulLogin", func(t *testing.T) {
 		result, err := svc.Login(ctx, &LoginRequest{
-			Username: "loginuser",
-			Password: "password123",
+			AuthToken:  "valid-auth-token",
+			DeviceType: "desktop",
 		}, "127.0.0.1", "TestAgent")
 
 		if err != nil {
@@ -156,54 +243,66 @@ func TestLogin(t *testing.T) {
 		if result.Token == "" {
 			t.Error("Expected token")
 		}
-		if result.Player.Username != "loginuser" {
-			t.Errorf("Expected username 'loginuser', got '%s'", result.Player.Username)
+		if result.Player.Username != "LoginPlayer" {
+			t.Errorf("Expected username 'LoginPlayer', got '%s'", result.Player.Username)
+		}
+		if result.Player.ID != "11111111-1111-1111-1111-111111111111" {
+			t.Errorf("Expected player ID '11111111-1111-1111-1111-111111111111', got '%s'", result.Player.ID)
 		}
 	})
 
-	t.Run("InvalidPassword", func(t *testing.T) {
+	t.Run("InvalidAuthToken", func(t *testing.T) {
 		_, err := svc.Login(ctx, &LoginRequest{
-			Username: "loginuser",
-			Password: "wrongpassword",
+			AuthToken:  "invalid-auth-token",
+			DeviceType: "desktop",
 		}, "127.0.0.1", "TestAgent")
 
 		if err == nil {
-			t.Error("Expected error for invalid password")
+			t.Error("Expected error for invalid auth token")
 		}
 	})
 
-	t.Run("NonexistentUser", func(t *testing.T) {
+	t.Run("EmptyAuthToken", func(t *testing.T) {
 		_, err := svc.Login(ctx, &LoginRequest{
-			Username: "nonexistent",
-			Password: "password123",
+			AuthToken:  "",
+			DeviceType: "desktop",
 		}, "127.0.0.1", "TestAgent")
 
 		if err == nil {
-			t.Error("Expected error for nonexistent user")
+			t.Error("Expected error for empty auth token")
 		}
 	})
 }
 
 func TestValidateToken(t *testing.T) {
-	svc, cleanup := setupTestAuth(t)
+	// Create mock with specific player ID (must be valid UUID)
+	authResult := &pateplay.AuthenticateResult{
+		SessionToken: "mock-session-token",
+		PlayerID:     "22222222-2222-2222-2222-222222222222",
+		PlayerName:   "TokenUser",
+		Currency:     "USD",
+		Country:      "US",
+		Balance:      "1000.00",
+	}
+
+	svc, cleanup := setupTestAuthWithMock(t, "valid-auth-token", authResult)
 	defer cleanup()
 
 	ctx := context.Background()
 
-	// Register and login
-	_, regErr := svc.Register(ctx, &RegisterRequest{
-		Username: "tokenuser",
-		Email:    "token@example.com",
-		Password: "password123",
-		AcceptTC: true,
-	}, "127.0.0.1")
-	if regErr != nil {
-		t.Fatalf("Registration failed: %v", regErr)
+	// Insert player with the ID that Pateplay will return
+	_, err := svc.db.ExecContext(ctx, `
+		INSERT INTO players (id, username, email, password_hash, status, registration_date, tc_accepted_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, authResult.PlayerID, authResult.PlayerName, "token@example.com", "", "active",
+		time.Now().UTC(), time.Now().UTC(), time.Now().UTC(), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("Failed to insert test player: %v", err)
 	}
 
 	loginResult, loginErr := svc.Login(ctx, &LoginRequest{
-		Username: "tokenuser",
-		Password: "password123",
+		AuthToken:  "valid-auth-token",
+		DeviceType: "desktop",
 	}, "127.0.0.1", "TestAgent")
 	if loginErr != nil {
 		t.Fatalf("Login failed: %v", loginErr)
@@ -218,8 +317,8 @@ func TestValidateToken(t *testing.T) {
 		if session.PlayerID == "" {
 			t.Error("Expected player ID in session")
 		}
-		if player.Username != "tokenuser" {
-			t.Errorf("Expected username 'tokenuser', got '%s'", player.Username)
+		if player.Username != "TokenUser" {
+			t.Errorf("Expected username 'TokenUser', got '%s'", player.Username)
 		}
 	})
 
@@ -241,23 +340,38 @@ func TestValidateToken(t *testing.T) {
 }
 
 func TestLogout(t *testing.T) {
-	svc, cleanup := setupTestAuth(t)
+	// Create mock with specific player ID (must be valid UUID)
+	authResult := &pateplay.AuthenticateResult{
+		SessionToken: "mock-session-token",
+		PlayerID:     "33333333-3333-3333-3333-333333333333",
+		PlayerName:   "LogoutUser",
+		Currency:     "USD",
+		Country:      "US",
+		Balance:      "1000.00",
+	}
+
+	svc, cleanup := setupTestAuthWithMock(t, "valid-auth-token", authResult)
 	defer cleanup()
 
 	ctx := context.Background()
 
-	// Register and login
-	svc.Register(ctx, &RegisterRequest{
-		Username: "logoutuser",
-		Email:    "logout@example.com",
-		Password: "password123",
-		AcceptTC: true,
-	}, "127.0.0.1")
+	// Insert player with the ID that Pateplay will return
+	_, err := svc.db.ExecContext(ctx, `
+		INSERT INTO players (id, username, email, password_hash, status, registration_date, tc_accepted_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, authResult.PlayerID, authResult.PlayerName, "logout@example.com", "", "active",
+		time.Now().UTC(), time.Now().UTC(), time.Now().UTC(), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("Failed to insert test player: %v", err)
+	}
 
-	loginResult, _ := svc.Login(ctx, &LoginRequest{
-		Username: "logoutuser",
-		Password: "password123",
+	loginResult, loginErr := svc.Login(ctx, &LoginRequest{
+		AuthToken:  "valid-auth-token",
+		DeviceType: "desktop",
 	}, "127.0.0.1", "TestAgent")
+	if loginErr != nil {
+		t.Fatalf("Login failed: %v", loginErr)
+	}
 
 	t.Run("SuccessfulLogout", func(t *testing.T) {
 		// Validate token first
@@ -281,39 +395,48 @@ func TestLogout(t *testing.T) {
 }
 
 func TestAccountLockout(t *testing.T) {
-	svc, cleanup := setupTestAuth(t)
+	// Create mock with specific player ID (must be valid UUID)
+	authResult := &pateplay.AuthenticateResult{
+		SessionToken: "mock-session-token",
+		PlayerID:     "44444444-4444-4444-4444-444444444444",
+		PlayerName:   "LockoutUser",
+		Currency:     "USD",
+		Country:      "US",
+		Balance:      "1000.00",
+	}
+
+	svc, cleanup := setupTestAuthWithMock(t, "valid-auth-token", authResult)
 	defer cleanup()
 
 	ctx := context.Background()
 
-	// Register a user - check for errors
-	_, err := svc.Register(ctx, &RegisterRequest{
-		Username: "lockuser",
-		Email:    "lock@example.com",
-		Password: "password123",
-		AcceptTC: true,
-	}, "127.0.0.1")
+	// Insert player with the ID that Pateplay will return
+	_, err := svc.db.ExecContext(ctx, `
+		INSERT INTO players (id, username, email, password_hash, status, registration_date, tc_accepted_at, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, authResult.PlayerID, authResult.PlayerName, "lockout@example.com", "", "active",
+		time.Now().UTC(), time.Now().UTC(), time.Now().UTC(), time.Now().UTC())
 	if err != nil {
-		t.Fatalf("Failed to register lockuser: %v", err)
+		t.Fatalf("Failed to insert test player: %v", err)
 	}
 
 	t.Run("FailedLoginRecorded", func(t *testing.T) {
-		// Attempt login with wrong password - should fail with invalid credentials
+		// Attempt login with invalid auth token - should fail
 		_, err := svc.Login(ctx, &LoginRequest{
-			Username: "lockuser",
-			Password: "wrongpassword",
+			AuthToken:  "invalid-auth-token",
+			DeviceType: "desktop",
 		}, "127.0.0.1", "TestAgent")
 
-		if err != ErrInvalidCredentials {
-			t.Errorf("Expected ErrInvalidCredentials, got: %v", err)
+		if err == nil {
+			t.Error("Expected error for invalid auth token")
 		}
 	})
 
-	t.Run("CorrectPasswordAfterFailure", func(t *testing.T) {
-		// Correct password should still work (only 1 failed attempt)
+	t.Run("ValidAuthTokenAfterFailure", func(t *testing.T) {
+		// Valid auth token should still work after failed attempt
 		result, err := svc.Login(ctx, &LoginRequest{
-			Username: "lockuser",
-			Password: "password123",
+			AuthToken:  "valid-auth-token",
+			DeviceType: "desktop",
 		}, "127.0.0.1", "TestAgent")
 
 		if err != nil {

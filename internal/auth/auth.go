@@ -12,6 +12,7 @@ import (
 	"github.com/alexbotov/rgs/internal/audit"
 	"github.com/alexbotov/rgs/internal/config"
 	"github.com/alexbotov/rgs/internal/domain"
+	"github.com/alexbotov/rgs/pkg/pateplay"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
@@ -28,17 +29,19 @@ var (
 
 // Service provides authentication functionality
 type Service struct {
-	db     *sql.DB
-	config *config.AuthConfig
-	audit  *audit.Service
+	db       *sql.DB
+	config   *config.AuthConfig
+	audit    *audit.Service
+	pateplay *pateplay.Client
 }
 
 // New creates a new auth service
-func New(db *sql.DB, cfg *config.AuthConfig, auditSvc *audit.Service) *Service {
+func New(db *sql.DB, cfg *config.AuthConfig, auditSvc *audit.Service, pateplayClient *pateplay.Client) *Service {
 	return &Service{
-		db:     db,
-		config: cfg,
-		audit:  auditSvc,
+		db:       db,
+		config:   cfg,
+		audit:    auditSvc,
+		pateplay: pateplayClient,
 	}
 }
 
@@ -124,8 +127,8 @@ func (s *Service) Register(ctx context.Context, req *RegisterRequest, ip string)
 
 // LoginRequest contains login credentials
 type LoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	AuthToken  string `json:"auth_token"`
+	DeviceType string `json:"device_type"`
 }
 
 // LoginResponse contains login result
@@ -137,36 +140,41 @@ type LoginResponse struct {
 
 // Login authenticates a player (GLI-19 §2.5.3)
 func (s *Service) Login(ctx context.Context, req *LoginRequest, ip, userAgent string) (*LoginResponse, error) {
-	// Check for lockout (GLI-19 §2.5.3.d)
-	if s.isLockedOut(ctx, req.Username, ip) {
-		return nil, ErrAccountLocked
+	authResult, err := s.pateplay.Authenticate(ctx, req.AuthToken, pateplay.DeviceTypeDesktop)
+	if err != nil {
+		// authResult may be nil on error, so we can't access its fields
+		s.audit.Log(ctx, audit.EventLoginFailed, domain.SeverityWarning,
+			fmt.Sprintf("Pateplay authentication failed: %v", err),
+			map[string]string{"error": err.Error()},
+			audit.WithIP(ip))
+		return nil, ErrInvalidCredentials
 	}
 
 	// Get player
 	var player domain.Player
-	err := s.db.QueryRowContext(ctx, `
+	err = s.db.QueryRowContext(ctx, `
 		SELECT id, username, email, password_hash, status, registration_date, last_login_at, tc_accepted_at, created_at, updated_at
-		FROM players WHERE username = $1 OR email = $1
-	`, req.Username).Scan(
+		FROM players WHERE id = $1
+	`, authResult.PlayerID).Scan(
 		&player.ID, &player.Username, &player.Email, &player.PasswordHash,
 		&player.Status, &player.RegistrationDate, &player.LastLoginAt,
 		&player.TCAcceptedAt, &player.CreatedAt, &player.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			s.recordFailedLogin(ctx, req.Username, ip)
-			return nil, ErrInvalidCredentials
+			s.Register(ctx, &RegisterRequest{
+				Username: authResult.PlayerName,
+				Email:    authResult.PlayerName,
+				Password: authResult.PlayerName,
+				AcceptTC: true,
+			}, ip)
+		} else {
+			return nil, fmt.Errorf("database error: %w", err)
 		}
-		return nil, fmt.Errorf("database error: %w", err)
 	}
 
-	// Check password
-	if err := bcrypt.CompareHashAndPassword([]byte(player.PasswordHash), []byte(req.Password)); err != nil {
-		s.recordFailedLogin(ctx, req.Username, ip)
-		s.audit.Log(ctx, audit.EventLoginFailed, domain.SeverityWarning,
-			fmt.Sprintf("Failed login attempt for: %s", req.Username),
-			map[string]string{"username": req.Username},
-			audit.WithIP(ip))
-		return nil, ErrInvalidCredentials
+	// Check for lockout (GLI-19 §2.5.3.d)
+	if s.isLockedOut(ctx, player.ID, player.LastLoginAt) {
+		return nil, ErrAccountLocked
 	}
 
 	// Check account status
@@ -187,7 +195,7 @@ func (s *Service) Login(ctx context.Context, req *LoginRequest, ip, userAgent st
 	player.LastLoginAt = &now
 
 	// Clear failed login attempts
-	s.db.ExecContext(ctx, "DELETE FROM failed_logins WHERE username = $1", req.Username)
+	s.db.ExecContext(ctx, "DELETE FROM failed_logins WHERE player_id = $1", player.ID)
 
 	// Audit log
 	s.audit.Log(ctx, audit.EventPlayerLogin, domain.SeverityInfo,
@@ -359,12 +367,15 @@ func (s *Service) GetPlayer(ctx context.Context, playerID string) (*domain.Playe
 }
 
 // isLockedOut checks if account is locked due to failed attempts (GLI-19 §2.5.3.d)
-func (s *Service) isLockedOut(ctx context.Context, username, ip string) bool {
-	cutoff := time.Now().Add(-s.config.LockoutDuration)
+func (s *Service) isLockedOut(ctx context.Context, playerID string, lastLoginAt *time.Time) bool {
+	if lastLoginAt == nil {
+		return false
+	}
+	cutoff := lastLoginAt.Add(-s.config.LockoutDuration)
 	var count int
 	s.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM failed_logins WHERE username = $1 AND attempted_at > $2",
-		username, cutoff).Scan(&count)
+		"SELECT COUNT(*) FROM failed_logins WHERE player_id = $1 AND attempted_at > $2 AND attempted_at < $3",
+		playerID, cutoff, time.Now()).Scan(&count)
 	return count >= s.config.MaxFailedAttempts
 }
 

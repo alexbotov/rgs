@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,23 +24,92 @@ import (
 	"github.com/alexbotov/rgs/internal/limits"
 	"github.com/alexbotov/rgs/internal/rng"
 	"github.com/alexbotov/rgs/internal/wallet"
+	"github.com/alexbotov/rgs/pkg/pateplay"
 	"github.com/google/uuid"
 )
 
+// mockPateplayServer creates a mock Pateplay API server for integration tests
+type mockPateplayServer struct {
+	server      *httptest.Server
+	validTokens map[string]*pateplay.AuthenticateResult // authToken -> result
+	mu          sync.RWMutex
+}
+
+func newMockPateplayServer() *mockPateplayServer {
+	m := &mockPateplayServer{
+		validTokens: make(map[string]*pateplay.AuthenticateResult),
+	}
+
+	m.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req pateplay.AuthenticateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		m.mu.RLock()
+		result, ok := m.validTokens[req.AuthToken]
+		m.mu.RUnlock()
+
+		if ok {
+			json.NewEncoder(w).Encode(pateplay.Response[pateplay.AuthenticateResult]{
+				Result: result,
+			})
+			return
+		}
+
+		json.NewEncoder(w).Encode(pateplay.Response[pateplay.AuthenticateResult]{
+			Error: &pateplay.APIError{
+				Code:    pateplay.ErrInvalidAuthToken,
+				Message: "Invalid auth token",
+			},
+		})
+	}))
+
+	return m
+}
+
+// registerPlayer registers a player ID with an auth token for testing
+func (m *mockPateplayServer) registerPlayer(authToken string, playerID, playerName string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.validTokens[authToken] = &pateplay.AuthenticateResult{
+		SessionToken: "mock-session-" + playerID,
+		PlayerID:     playerID,
+		PlayerName:   playerName,
+		Currency:     "USD",
+		Country:      "US",
+		Balance:      "1000.00",
+	}
+}
+
+func (m *mockPateplayServer) close() {
+	m.server.Close()
+}
+
 // TestServer wraps all services needed for integration testing
 type TestServer struct {
-	Server   *httptest.Server
-	DB       *database.DB
-	Auth     *auth.Service
-	Wallet   *wallet.Service
-	Game     *game.Engine
-	RNG      *rng.Service
-	Audit    *audit.Service
-	Limits   *limits.Service
-	Control  *control.Service
-	Handler  *api.Handler
-	Config   *config.Config
-	teardown func()
+	Server       *httptest.Server
+	DB           *database.DB
+	Auth         *auth.Service
+	Wallet       *wallet.Service
+	Game         *game.Engine
+	RNG          *rng.Service
+	Audit        *audit.Service
+	Limits       *limits.Service
+	Control      *control.Service
+	Handler      *api.Handler
+	Config       *config.Config
+	Pateplay     *pateplay.Client
+	MockPateplay *mockPateplayServer
+	teardown     func()
 }
 
 // NewTestServer creates a new test server with all services initialized
@@ -83,10 +153,19 @@ func NewTestServer(t *testing.T) *TestServer {
 		t.Fatalf("Failed to migrate database: %v", err)
 	}
 
+	// Initialize mock Pateplay server
+	mockPateplay := newMockPateplayServer()
+
 	// Initialize services
 	auditSvc := audit.New(db.DB)
+	pateplayClient := pateplay.NewClient(&pateplay.ClientConfig{
+		BaseURL:   mockPateplay.server.URL,
+		APIKey:    "test-api-key",
+		APISecret: "test-api-secret",
+		SiteCode:  "testsite",
+	})
 	rngSvc := rng.New()
-	authSvc := auth.New(db.DB, &cfg.Auth, auditSvc)
+	authSvc := auth.New(db.DB, &cfg.Auth, auditSvc, pateplayClient)
 	walletSvc := wallet.New(db.DB, auditSvc, cfg.Game.DefaultCurrency)
 	gameEngine := game.New(db.DB, rngSvc, walletSvc, auditSvc, cfg.Game.DefaultCurrency)
 	limitsSvc := limits.New(db.DB, auditSvc, cfg.Game.DefaultCurrency)
@@ -100,19 +179,22 @@ func NewTestServer(t *testing.T) *TestServer {
 	server := httptest.NewServer(router)
 
 	return &TestServer{
-		Server:  server,
-		DB:      db,
-		Auth:    authSvc,
-		Wallet:  walletSvc,
-		Game:    gameEngine,
-		RNG:     rngSvc,
-		Audit:   auditSvc,
-		Limits:  limitsSvc,
-		Control: controlSvc,
-		Handler: handler,
-		Config:  cfg,
+		Server:       server,
+		DB:           db,
+		Auth:         authSvc,
+		Wallet:       walletSvc,
+		Game:         gameEngine,
+		RNG:          rngSvc,
+		Audit:        auditSvc,
+		Limits:       limitsSvc,
+		Control:      controlSvc,
+		Handler:      handler,
+		Config:       cfg,
+		Pateplay:     pateplayClient,
+		MockPateplay: mockPateplay,
 		teardown: func() {
 			server.Close()
+			mockPateplay.close()
 			db.Reset() // Clean up after tests
 			db.Close()
 		},
@@ -125,6 +207,7 @@ func (ts *TestServer) Close() {
 }
 
 // createTestUser creates a user directly via auth service (bypasses API)
+// Also registers the player in the mock Pateplay server with an auth token
 func (ts *TestServer) createTestUser(t *testing.T, username, email, password string) *domain.Player {
 	t.Helper()
 	player, err := ts.Auth.Register(context.Background(), &auth.RegisterRequest{
@@ -136,7 +219,18 @@ func (ts *TestServer) createTestUser(t *testing.T, username, email, password str
 	if err != nil {
 		t.Fatalf("Failed to create test user %s: %v", username, err)
 	}
+
+	// Register the player in mock Pateplay so they can login via auth token
+	// Auth token format: "token-{playerID}" for easy testing
+	authToken := "token-" + player.ID
+	ts.MockPateplay.registerPlayer(authToken, player.ID, username)
+
 	return player
+}
+
+// getAuthToken returns the auth token for a player (for use in login requests)
+func (ts *TestServer) getAuthToken(playerID string) string {
+	return "token-" + playerID
 }
 
 // APIResponse represents a standard API response
@@ -281,13 +375,13 @@ func TestPlayerLogin(t *testing.T) {
 	defer ts.Close()
 
 	// Create a user first (via auth service, not API)
-	ts.createTestUser(t, "logintest", "login@example.com", "password123")
+	player := ts.createTestUser(t, "logintest", "login@example.com", "password123")
 
 	// Test successful login
 	t.Run("SuccessfulLogin", func(t *testing.T) {
 		resp := ts.doRequest(t, "POST", "/api/v1/auth/login", map[string]interface{}{
-			"username": "logintest",
-			"password": "password123",
+			"auth_token":  ts.getAuthToken(player.ID),
+			"device_type": "desktop",
 		}, "")
 		defer resp.Body.Close()
 
@@ -302,11 +396,11 @@ func TestPlayerLogin(t *testing.T) {
 		}
 	})
 
-	// Test invalid password
-	t.Run("InvalidPassword", func(t *testing.T) {
+	// Test invalid auth token
+	t.Run("InvalidAuthToken", func(t *testing.T) {
 		resp := ts.doRequest(t, "POST", "/api/v1/auth/login", map[string]interface{}{
-			"username": "logintest",
-			"password": "wrongpassword",
+			"auth_token":  "invalid-token",
+			"device_type": "desktop",
 		}, "")
 		defer resp.Body.Close()
 
@@ -315,11 +409,11 @@ func TestPlayerLogin(t *testing.T) {
 		}
 	})
 
-	// Test non-existent user
-	t.Run("NonExistentUser", func(t *testing.T) {
+	// Test empty auth token
+	t.Run("EmptyAuthToken", func(t *testing.T) {
 		resp := ts.doRequest(t, "POST", "/api/v1/auth/login", map[string]interface{}{
-			"username": "nonexistent",
-			"password": "password123",
+			"auth_token":  "",
+			"device_type": "desktop",
 		}, "")
 		defer resp.Body.Close()
 
@@ -334,11 +428,11 @@ func TestSessionManagement(t *testing.T) {
 	defer ts.Close()
 
 	// Create user and login
-	ts.createTestUser(t, "sessiontest", "session@example.com", "password123")
+	player := ts.createTestUser(t, "sessiontest", "session@example.com", "password123")
 
 	loginResp := ts.doRequest(t, "POST", "/api/v1/auth/login", map[string]interface{}{
-		"username": "sessiontest",
-		"password": "password123",
+		"auth_token":  ts.getAuthToken(player.ID),
+		"device_type": "desktop",
 	}, "")
 	loginData := parseResponse(t, loginResp)
 	token := extractField(t, loginData.Data, "token")
@@ -383,11 +477,11 @@ func TestWalletOperations(t *testing.T) {
 	defer ts.Close()
 
 	// Setup: Create user and login
-	ts.createTestUser(t, "wallettest", "wallet@example.com", "password123")
+	player := ts.createTestUser(t, "wallettest", "wallet@example.com", "password123")
 
 	loginResp := ts.doRequest(t, "POST", "/api/v1/auth/login", map[string]interface{}{
-		"username": "wallettest",
-		"password": "password123",
+		"auth_token":  ts.getAuthToken(player.ID),
+		"device_type": "desktop",
 	}, "")
 	loginData := parseResponse(t, loginResp)
 	token := extractField(t, loginData.Data, "token")
@@ -495,11 +589,11 @@ func TestGameOperations(t *testing.T) {
 	defer ts.Close()
 
 	// Setup: Create user, login, and deposit
-	ts.createTestUser(t, "gametest", "game@example.com", "password123")
+	player := ts.createTestUser(t, "gametest", "game@example.com", "password123")
 
 	loginResp := ts.doRequest(t, "POST", "/api/v1/auth/login", map[string]interface{}{
-		"username": "gametest",
-		"password": "password123",
+		"auth_token":  ts.getAuthToken(player.ID),
+		"device_type": "desktop",
 	}, "")
 	loginData := parseResponse(t, loginResp)
 	token := extractField(t, loginData.Data, "token")
@@ -769,8 +863,8 @@ func TestCompletePlayerJourney(t *testing.T) {
 	// Step 2: Login
 	t.Log("Step 2: Logging in...")
 	loginResp := ts.doRequest(t, "POST", "/api/v1/auth/login", map[string]interface{}{
-		"username": "journey_player",
-		"password": "securepass123",
+		"auth_token":  ts.getAuthToken(player.ID),
+		"device_type": "desktop",
 	}, "")
 	loginData := parseResponse(t, loginResp)
 	if !loginData.Success {

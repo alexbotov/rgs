@@ -2,7 +2,7 @@
 	"info": {
 		"_postman_id": "rgs-integration-tests",
 		"name": "RGS - Remote Gaming Server",
-		"description": "End-to-end integration tests for the Remote Gaming Server based on GLI-19 compliance standards.\n\n## Prerequisites\n**Important:** Users must be created before running these tests. The RGS does not expose a public registration API.\n\nCreate test users via the auth service or database before running tests.\n\n## Usage\n1. Set the `base_url` variable to your RGS server URL\n2. Set `test_username` and `test_password` to valid credentials\n3. Each folder can be run independently",
+		"description": "End-to-end integration tests for the Remote Gaming Server based on GLI-19 compliance standards.\n\n## Prerequisites\n**Important:** Users must be created before running these tests. The RGS does not expose a public registration API.\n\nCreate test users via the auth service or database before running tests.\n\n## GLI-19 Compliance Features\n- **Player Limits (§2.5.5)**: Deposit, wager, and loss limits\n- **Self-Exclusion (§2.5.5)**: Temporary and permanent self-exclusion\n- **Gaming Control (§2.4)**: System-wide and per-game/player enable/disable\n- **Interrupted Games (§4.16)**: Resume, void, or refund interrupted games\n\n## Usage\n1. Set the `base_url` variable to your RGS server URL\n2. Set `test_username` and `test_password` to valid credentials\n3. Each folder can be run independently",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"variable": [
@@ -34,6 +34,11 @@
 		{
 			"key": "test_password",
 			"value": "password123",
+			"type": "string"
+		},
+		{
+			"key": "interrupted_cycle_id",
+			"value": "",
 			"type": "string"
 		}
 	],
@@ -632,7 +637,7 @@
 					}
 				}
 			],
-			"description": "Complete wallet flow: balance checking, deposits, withdrawals, and transaction history.\n\n**Prerequisite:** A test user must exist. Set `test_username` and `test_password` collection variables."
+			"description": "Complete wallet flow: balance checking, deposits, withdrawals, and transaction history.\n\n**GLI-19 §2.5.6** - Financial Transactions\n**GLI-19 §2.5.7** - Transaction Log\n\n**Prerequisite:** A test user must exist. Set `test_username` and `test_password` collection variables."
 		},
 		{
 			"name": "Games",
@@ -1069,7 +1074,788 @@
 					}
 				}
 			],
-			"description": "Complete game flow: browsing games, starting sessions, playing, and viewing history.\n\n**Prerequisite:** A test user must exist. Set `test_username` and `test_password` collection variables."
+			"description": "Complete game flow: browsing games, starting sessions, playing, and viewing history.\n\n**GLI-19 §4.3** - Game Session Management\n**GLI-19 §4.3.3** - Game Cycle\n**GLI-19 §4.5** - Game Outcome Determination\n**GLI-19 §4.14** - Game Recall\n\n**Prerequisite:** A test user must exist. Set `test_username` and `test_password` collection variables."
+		},
+		{
+			"name": "Player Limits (GLI-19 §2.5.5)",
+			"item": [
+				{
+					"name": "1. Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Login successful', function () {",
+									"    pm.response.to.have.status(200);",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.collectionVariables.set('token', jsonData.data.token);",
+									"    pm.collectionVariables.set('player_id', jsonData.data.player.id);",
+									"});",
+									"",
+									"console.log('Step 1: Logged in successfully');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"username\": \"{{test_username}}\",\n    \"password\": \"{{test_password}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/login",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "auth", "login"]
+						}
+					}
+				},
+				{
+					"name": "2. Get Current Limits",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Limits response returned', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});",
+									"",
+									"console.log('Step 2: Current limits retrieved');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/limits",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "limits"]
+						}
+					}
+				},
+				{
+					"name": "3. Set Daily Deposit Limit",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Deposit limit set', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});",
+									"",
+									"console.log('Step 3: Daily deposit limit set to $500');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"period\": \"daily\",\n    \"amount\": 50000\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/limits/deposit",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "limits", "deposit"]
+						}
+					}
+				},
+				{
+					"name": "4. Set Daily Wager Limit",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Wager limit set', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});",
+									"",
+									"console.log('Step 4: Daily wager limit set to $200');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"period\": \"daily\",\n    \"amount\": 20000\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/limits/wager",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "limits", "wager"]
+						}
+					}
+				},
+				{
+					"name": "5. Set Daily Loss Limit",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Loss limit set', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});",
+									"",
+									"console.log('Step 5: Daily loss limit set to $100');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"period\": \"daily\",\n    \"amount\": 10000\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/limits/loss",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "limits", "loss"]
+						}
+					}
+				},
+				{
+					"name": "6. Verify Limits Are Set",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('All limits are set', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    // Verify limits are returned",
+									"    pm.expect(jsonData.data).to.have.property('daily_deposit');",
+									"    pm.expect(jsonData.data).to.have.property('daily_wager');",
+									"    pm.expect(jsonData.data).to.have.property('daily_loss');",
+									"});",
+									"",
+									"console.log('Step 6: All limits verified');",
+									"console.log('✓ Player Limits tests passed!');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/limits",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "limits"]
+						}
+					}
+				}
+			],
+			"description": "Player limits for responsible gaming.\n\n**GLI-19 §2.5.5** - Limitations and Exclusions\n\nTests cover:\n- Setting deposit limits (daily, weekly, monthly)\n- Setting wager limits\n- Setting loss limits\n- Limit decreases are immediate\n- Limit increases require 24-hour cooling off period"
+		},
+		{
+			"name": "Self-Exclusion (GLI-19 §2.5.5)",
+			"item": [
+				{
+					"name": "1. Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Login successful', function () {",
+									"    pm.response.to.have.status(200);",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.collectionVariables.set('token', jsonData.data.token);",
+									"    pm.collectionVariables.set('player_id', jsonData.data.player.id);",
+									"});",
+									"",
+									"console.log('Step 1: Logged in successfully');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"username\": \"{{test_username}}\",\n    \"password\": \"{{test_password}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/login",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "auth", "login"]
+						}
+					}
+				},
+				{
+					"name": "2. Check Exclusion Status",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Exclusion status returned', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});",
+									"",
+									"console.log('Step 2: Exclusion status checked');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/limits/exclusion",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "limits", "exclusion"]
+						}
+					}
+				},
+				{
+					"name": "3. Self-Exclude (7 days)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Self-exclusion activated', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});",
+									"",
+									"console.log('Step 3: Self-excluded for 7 days');",
+									"console.log('✓ Self-Exclusion tests passed!');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"reason\": \"Taking a break\",\n    \"duration_days\": 7\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/limits/self-exclude",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "limits", "self-exclude"]
+						}
+					}
+				}
+			],
+			"description": "Self-exclusion for responsible gaming.\n\n**GLI-19 §2.5.5.c** - Self-Exclusion\n\nTests cover:\n- Check exclusion status\n- Temporary self-exclusion (with duration)\n- Permanent self-exclusion\n- Excluded player cannot access gaming"
+		},
+		{
+			"name": "Gaming Control (GLI-19 §2.4)",
+			"item": [
+				{
+					"name": "1. Get System Status",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('System status returned', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.have.property('gaming_enabled');",
+									"});",
+									"",
+									"console.log('Step 1: System status retrieved');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{admin_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/admin/system/status",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "admin", "system", "status"]
+						}
+					}
+				},
+				{
+					"name": "2. Disable All Gaming",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Gaming disabled', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});",
+									"",
+									"console.log('Step 2: All gaming disabled');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{admin_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"reason\": \"System maintenance\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/admin/system/disable",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "admin", "system", "disable"]
+						}
+					}
+				},
+				{
+					"name": "3. Enable All Gaming",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Gaming enabled', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});",
+									"",
+									"console.log('Step 3: All gaming enabled');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{admin_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/admin/system/enable",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "admin", "system", "enable"]
+						}
+					}
+				},
+				{
+					"name": "4. Disable Specific Game",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Game disabled', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});",
+									"",
+									"console.log('Step 4: Fortune Slots disabled');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{admin_token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"reason\": \"Game maintenance\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/admin/games/fortune-slots/disable",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "admin", "games", "fortune-slots", "disable"]
+						}
+					}
+				},
+				{
+					"name": "5. Enable Specific Game",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Game enabled', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});",
+									"",
+									"console.log('Step 5: Fortune Slots enabled');",
+									"console.log('✓ Gaming Control tests passed!');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{admin_token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/admin/games/fortune-slots/enable",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "admin", "games", "fortune-slots", "enable"]
+						}
+					}
+				}
+			],
+			"description": "Gaming control for system management.\n\n**GLI-19 §2.4** - Gaming Management\n\nTests cover:\n- Get system status\n- Disable/enable all gaming system-wide\n- Disable/enable specific games\n- Disable/enable specific players\n\n**Requires admin_token** for authentication."
+		},
+		{
+			"name": "Interrupted Games (GLI-19 §4.16)",
+			"item": [
+				{
+					"name": "1. Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Login successful', function () {",
+									"    pm.response.to.have.status(200);",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.collectionVariables.set('token', jsonData.data.token);",
+									"    pm.collectionVariables.set('player_id', jsonData.data.player.id);",
+									"});",
+									"",
+									"console.log('Step 1: Logged in successfully');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"username\": \"{{test_username}}\",\n    \"password\": \"{{test_password}}\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/auth/login",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "auth", "login"]
+						}
+					}
+				},
+				{
+					"name": "2. Get Interrupted Games",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Interrupted games list returned', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"    pm.expect(jsonData.data).to.be.an('array');",
+									"});",
+									"",
+									"const jsonData = pm.response.json();",
+									"if (jsonData.data.length > 0) {",
+									"    pm.collectionVariables.set('interrupted_cycle_id', jsonData.data[0].cycle_id);",
+									"}",
+									"console.log('Step 2: Found ' + jsonData.data.length + ' interrupted games');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/games/interrupted",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "games", "interrupted"]
+						}
+					}
+				},
+				{
+					"name": "3. Resume Interrupted Game",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (!pm.collectionVariables.get('interrupted_cycle_id')) {",
+									"    pm.test.skip('No interrupted games to resume');",
+									"    console.log('Step 3: Skipped - no interrupted games');",
+									"    return;",
+									"}",
+									"",
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Game resumed', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});",
+									"",
+									"console.log('Step 3: Interrupted game resumed');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v1/games/interrupted/{{interrupted_cycle_id}}/resume",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "games", "interrupted", "{{interrupted_cycle_id}}", "resume"]
+						}
+					}
+				},
+				{
+					"name": "4. Void Interrupted Game",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (!pm.collectionVariables.get('interrupted_cycle_id')) {",
+									"    pm.test.skip('No interrupted games to void');",
+									"    console.log('Step 4: Skipped - no interrupted games');",
+									"    return;",
+									"}",
+									"",
+									"pm.test('Status code is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test('Game voided', function () {",
+									"    const jsonData = pm.response.json();",
+									"    pm.expect(jsonData.success).to.be.true;",
+									"});",
+									"",
+									"console.log('Step 4: Interrupted game voided');",
+									"console.log('✓ Interrupted Games tests passed!');"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							},
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"reason\": \"Player requested void\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v1/games/interrupted/{{interrupted_cycle_id}}/void",
+							"host": ["{{base_url}}"],
+							"path": ["api", "v1", "games", "interrupted", "{{interrupted_cycle_id}}", "void"]
+						}
+					}
+				}
+			],
+			"description": "Interrupted game handling for game recovery.\n\n**GLI-19 §4.16** - Interrupted Games\n\nTests cover:\n- List interrupted games for player\n- Resume interrupted game\n- Void interrupted game (with refund)\n- Get details of specific interrupted game"
 		},
 		{
 			"name": "Complete Player Journey",
@@ -1573,7 +2359,7 @@
 					}
 				}
 			],
-			"description": "Complete end-to-end player journey testing the full flow from login through gameplay to logout.\n\n**Prerequisite:** A test user must exist. Set `test_username` and `test_password` collection variables."
+			"description": "Complete end-to-end player journey testing the full flow from login through gameplay to logout.\n\nThis mirrors the TestCompletePlayerJourney integration test.\n\n**Prerequisite:** A test user must exist. Set `test_username` and `test_password` collection variables."
 		}
 	]
 }

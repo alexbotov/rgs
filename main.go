@@ -23,6 +23,7 @@ import (
 	"github.com/alexbotov/rgs/internal/game"
 	"github.com/alexbotov/rgs/internal/rng"
 	"github.com/alexbotov/rgs/internal/wallet"
+	"github.com/alexbotov/rgs/pkg/pateplay"
 )
 
 func main() {
@@ -59,7 +60,13 @@ func main() {
 	}
 	log.Printf("✓ RNG service initialized (Chi-Square: %.2f, Passed: %v)", rngHealth.ChiSquare, rngHealth.ChiSquarePassed)
 
-	authSvc := auth.New(db.DB, &cfg.Auth, auditSvc)
+	pateplayClient := pateplay.NewClient(&pateplay.ClientConfig{
+		BaseURL:   "https://api.pateplay.com",
+		APIKey:    "test-api-key",
+		APISecret: "test-api-secret",
+		SiteCode:  "testsite",
+	})
+	authSvc := auth.New(db.DB, &cfg.Auth, auditSvc, pateplayClient)
 	log.Println("✓ Auth service initialized")
 
 	walletSvc := wallet.New(db.DB, auditSvc, cfg.Game.DefaultCurrency)
@@ -87,7 +94,7 @@ func main() {
 		log.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 		printEndpoints(cfg.Server.Port)
 		log.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-		
+
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
 		}
