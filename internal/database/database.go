@@ -140,6 +140,54 @@ func (db *DB) Migrate() error {
 		attempted_at TIMESTAMP NOT NULL
 	);
 
+	-- Player Limits table (GLI-19 §2.5.5)
+	CREATE TABLE IF NOT EXISTS player_limits (
+		id UUID PRIMARY KEY,
+		player_id UUID NOT NULL REFERENCES players(id),
+		daily_deposit BIGINT,
+		weekly_deposit BIGINT,
+		monthly_deposit BIGINT,
+		daily_wager BIGINT,
+		weekly_wager BIGINT,
+		daily_loss BIGINT,
+		weekly_loss BIGINT,
+		session_duration INTEGER,
+		cooling_off_until TIMESTAMP,
+		source VARCHAR(50) NOT NULL DEFAULT 'player',
+		effective_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL,
+		UNIQUE(player_id)
+	);
+
+	-- Self Exclusions table (GLI-19 §2.5.5.c)
+	CREATE TABLE IF NOT EXISTS self_exclusions (
+		id UUID PRIMARY KEY,
+		player_id UUID NOT NULL REFERENCES players(id),
+		reason TEXT NOT NULL,
+		started_at TIMESTAMP NOT NULL,
+		expires_at TIMESTAMP,
+		removed_at TIMESTAMP,
+		removed_by VARCHAR(255),
+		is_active BOOLEAN NOT NULL DEFAULT true,
+		created_at TIMESTAMP NOT NULL
+	);
+
+	-- System State table (GLI-19 §2.4)
+	CREATE TABLE IF NOT EXISTS system_state (
+		key VARCHAR(100) PRIMARY KEY,
+		value TEXT NOT NULL,
+		updated_at TIMESTAMP NOT NULL,
+		updated_by VARCHAR(255)
+	);
+
+	-- Disabled Games table (GLI-19 §2.4)
+	CREATE TABLE IF NOT EXISTS disabled_games (
+		game_id VARCHAR(255) PRIMARY KEY,
+		reason TEXT NOT NULL,
+		disabled_at TIMESTAMP NOT NULL,
+		disabled_by VARCHAR(255) NOT NULL
+	);
+
 	-- Indexes for performance
 	CREATE INDEX IF NOT EXISTS idx_sessions_player ON sessions(player_id);
 	CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
@@ -150,6 +198,9 @@ func (db *DB) Migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_game_cycles_player ON game_cycles(player_id);
 	CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_audit_events_player ON audit_events(player_id);
+	CREATE INDEX IF NOT EXISTS idx_player_limits_player ON player_limits(player_id);
+	CREATE INDEX IF NOT EXISTS idx_self_exclusions_player ON self_exclusions(player_id);
+	CREATE INDEX IF NOT EXISTS idx_self_exclusions_active ON self_exclusions(is_active);
 	`
 
 	_, err := db.Exec(schema)
@@ -163,6 +214,10 @@ func (db *DB) Migrate() error {
 // Reset drops all tables (for testing)
 func (db *DB) Reset() error {
 	_, err := db.Exec(`
+		DROP TABLE IF EXISTS disabled_games CASCADE;
+		DROP TABLE IF EXISTS system_state CASCADE;
+		DROP TABLE IF EXISTS self_exclusions CASCADE;
+		DROP TABLE IF EXISTS player_limits CASCADE;
 		DROP TABLE IF EXISTS failed_logins CASCADE;
 		DROP TABLE IF EXISTS audit_events CASCADE;
 		DROP TABLE IF EXISTS game_cycles CASCADE;
@@ -178,7 +233,8 @@ func (db *DB) Reset() error {
 // CleanData truncates all tables without dropping them (for testing)
 func (db *DB) CleanData() error {
 	_, err := db.Exec(`
-		TRUNCATE TABLE failed_logins, audit_events, game_cycles, game_sessions, 
+		TRUNCATE TABLE disabled_games, system_state, self_exclusions, player_limits,
+		               failed_logins, audit_events, game_cycles, game_sessions, 
 		               transactions, balances, sessions, players CASCADE;
 	`)
 	return err

@@ -397,3 +397,193 @@ func (e *Engine) GetHistory(ctx context.Context, playerID string, limit int) ([]
 
 	return history, nil
 }
+
+// GetInterruptedGames retrieves a player's interrupted games
+// GLI-19 §4.16 - Interrupted Games: System must allow recovery of interrupted games
+func (e *Engine) GetInterruptedGames(ctx context.Context, playerID string) ([]*domain.InterruptedGame, error) {
+	rows, err := e.db.QueryContext(ctx, `
+		SELECT gc.id, gc.session_id, gc.player_id, gc.game_id, gc.started_at, 
+		       gc.wager_amount, gc.outcome, gs.currency
+		FROM game_cycles gc
+		JOIN game_sessions gs ON gc.session_id = gs.id
+		WHERE gc.player_id = $1 AND gc.status = $2
+		ORDER BY gc.started_at DESC
+	`, playerID, domain.CycleStatusInterrupted)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var interrupted []*domain.InterruptedGame
+	for rows.Next() {
+		var ig domain.InterruptedGame
+		var wager int64
+		var outcome, currency string
+
+		err := rows.Scan(&ig.CycleID, &ig.SessionID, &ig.PlayerID, &ig.GameID,
+			&ig.InterruptedAt, &wager, &outcome, &currency)
+		if err != nil {
+			return nil, err
+		}
+
+		ig.WagerHeld = domain.Money{Amount: wager, Currency: currency}
+		ig.GameState = json.RawMessage(outcome)
+		ig.CanResume = true
+		ig.Reason = "connection_lost"
+
+		interrupted = append(interrupted, &ig)
+	}
+
+	return interrupted, nil
+}
+
+// ResumeGame continues an interrupted game
+// GLI-19 §4.16 - Interrupted Games: Players must be able to resume interrupted games
+func (e *Engine) ResumeGame(ctx context.Context, cycleID string) (*PlayResult, error) {
+	// Get the interrupted cycle
+	var cycle domain.GameCycle
+	var wager, balBefore int64
+	var outcome, currency string
+
+	err := e.db.QueryRowContext(ctx, `
+		SELECT gc.id, gc.session_id, gc.player_id, gc.game_id, gc.started_at,
+		       gc.wager_amount, gc.balance_before, gc.outcome, gs.currency
+		FROM game_cycles gc
+		JOIN game_sessions gs ON gc.session_id = gs.id
+		WHERE gc.id = $1 AND gc.status = $2
+	`, cycleID, domain.CycleStatusInterrupted).Scan(
+		&cycle.ID, &cycle.SessionID, &cycle.PlayerID, &cycle.GameID,
+		&cycle.StartedAt, &wager, &balBefore, &outcome, &currency)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("interrupted game not found or already resolved")
+		}
+		return nil, err
+	}
+
+	cycle.WagerAmount = domain.Money{Amount: wager, Currency: currency}
+	cycle.BalanceBefore = domain.Money{Amount: balBefore, Currency: currency}
+	cycle.Outcome = json.RawMessage(outcome)
+
+	// Parse existing outcome
+	var slotOutcome SlotOutcome
+	if err := json.Unmarshal(cycle.Outcome, &slotOutcome); err != nil {
+		return nil, fmt.Errorf("failed to parse game state: %w", err)
+	}
+
+	// Calculate win based on stored outcome
+	winAmount := e.calculateWin(&slotOutcome, cycle.WagerAmount)
+
+	// Credit win if any
+	if winAmount.Amount > 0 {
+		_, err = e.wallet.CreditWin(ctx, cycle.PlayerID, winAmount, cycle.GameID, cycle.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Get updated balance
+	newBalance, _ := e.wallet.GetBalance(ctx, cycle.PlayerID)
+
+	now := time.Now().UTC()
+
+	// Update cycle status to completed
+	_, err = e.db.ExecContext(ctx, `
+		UPDATE game_cycles SET status = $1, completed_at = $2, win_amount = $3, balance_after = $4
+		WHERE id = $5
+	`, domain.CycleStatusCompleted, now, winAmount.Amount, newBalance.Available.Amount, cycleID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Audit log
+	e.audit.Log(ctx, "game_resumed", domain.SeverityInfo,
+		fmt.Sprintf("Interrupted game resumed: %s", cycleID),
+		map[string]interface{}{
+			"cycle_id":   cycleID,
+			"game_id":    cycle.GameID,
+			"win_amount": winAmount.Float64(),
+		},
+		audit.WithPlayer(cycle.PlayerID), audit.WithSession(cycle.SessionID))
+
+	return &PlayResult{
+		CycleID:     cycleID,
+		Outcome:     &slotOutcome,
+		WagerAmount: cycle.WagerAmount,
+		WinAmount:   winAmount,
+		Balance:     newBalance.Available,
+	}, nil
+}
+
+// VoidGame cancels an interrupted game and refunds the wager
+// GLI-19 §4.16 - Interrupted Games: Must support voiding with refund
+func (e *Engine) VoidGame(ctx context.Context, cycleID, reason string) error {
+	// Get the interrupted cycle
+	var playerID, gameID, sessionID string
+	var wager int64
+	var currency string
+
+	err := e.db.QueryRowContext(ctx, `
+		SELECT gc.player_id, gc.game_id, gc.session_id, gc.wager_amount, gs.currency
+		FROM game_cycles gc
+		JOIN game_sessions gs ON gc.session_id = gs.id
+		WHERE gc.id = $1 AND gc.status = $2
+	`, cycleID, domain.CycleStatusInterrupted).Scan(&playerID, &gameID, &sessionID, &wager, &currency)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("interrupted game not found or already resolved")
+		}
+		return err
+	}
+
+	wagerAmount := domain.Money{Amount: wager, Currency: currency}
+
+	// Refund the wager
+	_, err = e.wallet.CreditWin(ctx, playerID, wagerAmount, gameID, cycleID+"-refund")
+	if err != nil {
+		return fmt.Errorf("failed to refund wager: %w", err)
+	}
+
+	now := time.Now().UTC()
+
+	// Update cycle status to voided
+	_, err = e.db.ExecContext(ctx, `
+		UPDATE game_cycles SET status = $1, completed_at = $2 WHERE id = $3
+	`, domain.CycleStatusVoided, now, cycleID)
+	if err != nil {
+		return err
+	}
+
+	// Audit log - GLI-19 §2.8.8
+	e.audit.Log(ctx, "game_voided", domain.SeverityWarning,
+		fmt.Sprintf("Game voided and refunded: %s - %s", cycleID, reason),
+		map[string]interface{}{
+			"cycle_id":     cycleID,
+			"game_id":      gameID,
+			"refund_amount": wagerAmount.Float64(),
+			"reason":       reason,
+		},
+		audit.WithPlayer(playerID), audit.WithSession(sessionID))
+
+	return nil
+}
+
+// MarkInterrupted marks a game cycle as interrupted
+// GLI-19 §4.16 - System must detect and handle interruptions
+func (e *Engine) MarkInterrupted(ctx context.Context, cycleID, reason string) error {
+	_, err := e.db.ExecContext(ctx, `
+		UPDATE game_cycles SET status = $1 WHERE id = $2 AND status = $3
+	`, domain.CycleStatusInterrupted, cycleID, domain.CycleStatusInProgress)
+	if err != nil {
+		return err
+	}
+
+	// Update session status
+	_, err = e.db.ExecContext(ctx, `
+		UPDATE game_sessions SET status = $1 
+		WHERE id = (SELECT session_id FROM game_cycles WHERE id = $2)
+		AND status = $3
+	`, domain.GameSessionInterrupted, cycleID, domain.GameSessionActive)
+
+	return err
+}

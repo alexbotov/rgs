@@ -327,3 +327,262 @@ func TestGetHistory(t *testing.T) {
 		}
 	})
 }
+
+// ============================================================================
+// Interrupted Games Tests (GLI-19 §4.16)
+// ============================================================================
+
+func TestGetInterruptedGames(t *testing.T) {
+	engine, playerID, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	t.Run("NoInterruptedGames", func(t *testing.T) {
+		interrupted, err := engine.GetInterruptedGames(ctx, playerID)
+		if err != nil {
+			t.Fatalf("Failed to get interrupted games: %v", err)
+		}
+
+		if len(interrupted) != 0 {
+			t.Errorf("Expected 0 interrupted games, got %d", len(interrupted))
+		}
+	})
+}
+
+func TestMarkInterrupted(t *testing.T) {
+	engine, playerID, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Start session
+	session, err := engine.StartSession(ctx, playerID, "fortune-slots")
+	if err != nil {
+		t.Fatalf("Failed to start session: %v", err)
+	}
+
+	// Create a game cycle in progress (simulate by inserting directly)
+	cycleID := uuid.New().String()
+	_, err = engine.db.ExecContext(ctx, `
+		INSERT INTO game_cycles (id, session_id, player_id, game_id, started_at, wager_amount, win_amount, balance_before, balance_after, outcome, status, currency)
+		VALUES ($1, $2, $3, $4, NOW(), 100, 0, 100000, 99900, '{"reels":["7","7","7"]}', $5, 'USD')
+	`, cycleID, session.ID, playerID, "fortune-slots", domain.CycleStatusInProgress)
+	if err != nil {
+		t.Fatalf("Failed to create in-progress cycle: %v", err)
+	}
+
+	t.Run("MarkAsInterrupted", func(t *testing.T) {
+		err := engine.MarkInterrupted(ctx, cycleID, "Connection lost")
+		if err != nil {
+			t.Fatalf("Failed to mark as interrupted: %v", err)
+		}
+
+		// Verify cycle is now interrupted
+		var status domain.GameCycleStatus
+		engine.db.QueryRowContext(ctx, "SELECT status FROM game_cycles WHERE id = $1", cycleID).Scan(&status)
+
+		if status != domain.CycleStatusInterrupted {
+			t.Errorf("Expected status 'interrupted', got '%s'", status)
+		}
+	})
+
+	t.Run("GetInterruptedGames", func(t *testing.T) {
+		interrupted, err := engine.GetInterruptedGames(ctx, playerID)
+		if err != nil {
+			t.Fatalf("Failed to get interrupted games: %v", err)
+		}
+
+		if len(interrupted) != 1 {
+			t.Errorf("Expected 1 interrupted game, got %d", len(interrupted))
+		}
+
+		if interrupted[0].CycleID != cycleID {
+			t.Errorf("Expected cycle ID %s, got %s", cycleID, interrupted[0].CycleID)
+		}
+	})
+}
+
+func TestVoidGame(t *testing.T) {
+	engine, playerID, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Start session
+	session, _ := engine.StartSession(ctx, playerID, "fortune-slots")
+
+	// Create an interrupted game cycle
+	cycleID := uuid.New().String()
+	_, err := engine.db.ExecContext(ctx, `
+		INSERT INTO game_cycles (id, session_id, player_id, game_id, started_at, wager_amount, win_amount, balance_before, balance_after, outcome, status, currency)
+		VALUES ($1, $2, $3, $4, NOW(), 500, 0, 100000, 99500, '{"reels":["7","BAR","CHERRY"]}', $5, 'USD')
+	`, cycleID, session.ID, playerID, "fortune-slots", domain.CycleStatusInterrupted)
+	if err != nil {
+		t.Fatalf("Failed to create interrupted cycle: %v", err)
+	}
+
+	// Deduct the wager from balance (simulate what happened before interruption)
+	_, err = engine.db.ExecContext(ctx, `
+		UPDATE balances SET real_money_amount = real_money_amount - 500 WHERE player_id = $1
+	`, playerID)
+	if err != nil {
+		t.Fatalf("Failed to deduct balance: %v", err)
+	}
+
+	t.Run("VoidAndRefund", func(t *testing.T) {
+		// Get balance before void
+		balBefore, _ := engine.wallet.GetBalance(ctx, playerID)
+
+		err := engine.VoidGame(ctx, cycleID, "Player requested void")
+		if err != nil {
+			t.Fatalf("Failed to void game: %v", err)
+		}
+
+		// Verify cycle is now voided
+		var status domain.GameCycleStatus
+		engine.db.QueryRowContext(ctx, "SELECT status FROM game_cycles WHERE id = $1", cycleID).Scan(&status)
+
+		if status != domain.CycleStatusVoided {
+			t.Errorf("Expected status 'voided', got '%s'", status)
+		}
+
+		// Verify balance was refunded
+		balAfter, _ := engine.wallet.GetBalance(ctx, playerID)
+		if balAfter.RealMoney.Amount != balBefore.RealMoney.Amount+500 {
+			t.Errorf("Expected balance refund of 500 cents, before: %d, after: %d",
+				balBefore.RealMoney.Amount, balAfter.RealMoney.Amount)
+		}
+	})
+
+	t.Run("VoidAlreadyVoided", func(t *testing.T) {
+		err := engine.VoidGame(ctx, cycleID, "Try again")
+		if err == nil {
+			t.Error("Expected error when voiding already voided game")
+		}
+	})
+
+	t.Run("VoidNonexistent", func(t *testing.T) {
+		err := engine.VoidGame(ctx, uuid.New().String(), "Not found")
+		if err == nil {
+			t.Error("Expected error when voiding nonexistent game")
+		}
+	})
+}
+
+func TestResumeGame(t *testing.T) {
+	engine, playerID, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Start session
+	session, _ := engine.StartSession(ctx, playerID, "fortune-slots")
+
+	// Create an interrupted game cycle with a winning outcome
+	cycleID := uuid.New().String()
+	_, err := engine.db.ExecContext(ctx, `
+		INSERT INTO game_cycles (id, session_id, player_id, game_id, started_at, wager_amount, win_amount, balance_before, balance_after, outcome, status, currency)
+		VALUES ($1, $2, $3, $4, NOW(), 100, 0, 100000, 99900, '{"reels":["7","7","7"],"win_lines":[{"line":1,"symbols":["7","7","7"],"win":500}]}', $5, 'USD')
+	`, cycleID, session.ID, playerID, "fortune-slots", domain.CycleStatusInterrupted)
+	if err != nil {
+		t.Fatalf("Failed to create interrupted cycle: %v", err)
+	}
+
+	t.Run("ResumeInterruptedGame", func(t *testing.T) {
+		result, err := engine.ResumeGame(ctx, cycleID)
+		if err != nil {
+			t.Fatalf("Failed to resume game: %v", err)
+		}
+
+		if result.CycleID != cycleID {
+			t.Errorf("Expected cycle ID %s, got %s", cycleID, result.CycleID)
+		}
+
+		if result.Outcome == nil {
+			t.Error("Expected outcome to be present")
+		}
+
+		// Verify cycle is now completed
+		var status domain.GameCycleStatus
+		engine.db.QueryRowContext(ctx, "SELECT status FROM game_cycles WHERE id = $1", cycleID).Scan(&status)
+
+		if status != domain.CycleStatusCompleted {
+			t.Errorf("Expected status 'completed', got '%s'", status)
+		}
+	})
+
+	t.Run("ResumeAlreadyCompleted", func(t *testing.T) {
+		_, err := engine.ResumeGame(ctx, cycleID)
+		if err == nil {
+			t.Error("Expected error when resuming already completed game")
+		}
+	})
+
+	t.Run("ResumeNonexistent", func(t *testing.T) {
+		_, err := engine.ResumeGame(ctx, uuid.New().String())
+		if err == nil {
+			t.Error("Expected error when resuming nonexistent game")
+		}
+	})
+}
+
+func TestInterruptedGameFlow(t *testing.T) {
+	engine, playerID, cleanup := setupTestEngine(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Start session
+	session, _ := engine.StartSession(ctx, playerID, "fortune-slots")
+
+	// Play a game successfully
+	result, err := engine.Play(ctx, &PlayRequest{
+		SessionID:   session.ID,
+		WagerAmount: 100,
+	})
+	if err != nil {
+		t.Fatalf("Failed to play game: %v", err)
+	}
+
+	t.Log("Initial play completed successfully")
+
+	// Simulate creating an interrupted game
+	interruptedCycleID := uuid.New().String()
+	_, err = engine.db.ExecContext(ctx, `
+		INSERT INTO game_cycles (id, session_id, player_id, game_id, started_at, wager_amount, win_amount, balance_before, balance_after, outcome, status, currency)
+		VALUES ($1, $2, $3, $4, NOW(), 200, 0, $5, $6, '{"reels":["CHERRY","BAR","7"]}', $7, 'USD')
+	`, interruptedCycleID, session.ID, playerID, "fortune-slots", 
+		result.Balance.Amount, result.Balance.Amount-200, domain.CycleStatusInterrupted)
+	if err != nil {
+		t.Fatalf("Failed to create interrupted cycle: %v", err)
+	}
+
+	t.Run("VerifyInterruptedGameExists", func(t *testing.T) {
+		interrupted, err := engine.GetInterruptedGames(ctx, playerID)
+		if err != nil {
+			t.Fatalf("Failed to get interrupted games: %v", err)
+		}
+
+		if len(interrupted) != 1 {
+			t.Fatalf("Expected 1 interrupted game, got %d", len(interrupted))
+		}
+
+		if interrupted[0].WagerHeld.Amount != 200 {
+			t.Errorf("Expected wager held 200, got %d", interrupted[0].WagerHeld.Amount)
+		}
+	})
+
+	t.Run("ResolveByVoiding", func(t *testing.T) {
+		err := engine.VoidGame(ctx, interruptedCycleID, "Test resolution")
+		if err != nil {
+			t.Fatalf("Failed to void: %v", err)
+		}
+
+		// Verify no more interrupted games
+		interrupted, _ := engine.GetInterruptedGames(ctx, playerID)
+		if len(interrupted) != 0 {
+			t.Errorf("Expected 0 interrupted games after void, got %d", len(interrupted))
+		}
+	})
+}

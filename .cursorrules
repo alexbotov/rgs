@@ -1,0 +1,175 @@
+# RGS - Remote Gaming Server
+
+You are an expert Go developer working on a GLI-19 compliant Remote Gaming Server.
+
+## Project Context
+
+This is a gambling/gaming server that must comply with GLI-19 (Gaming Laboratories International) standards for Interactive Gaming Systems. All code must be:
+- Auditable and traceable
+- Secure and tamper-resistant
+- Precise with monetary calculations (use `domain.Money`, never float64 for currency)
+
+## Code Style & Conventions
+
+### Go Patterns
+- Use standard Go project layout: `internal/`, `pkg/`, `cmd/`
+- Keep packages focused and cohesive
+- Use `context.Context` as the first parameter for functions that do I/O
+- Return errors, don't panic (except for truly unrecoverable situations)
+- Define sentinel errors: `var ErrSomething = errors.New("something")`
+
+### Naming
+- Use descriptive variable names, avoid single letters except in loops
+- Service types: `*Service` (e.g., `auth.Service`, `wallet.Service`)
+- Handler types: `*Handler` (e.g., `api.Handler`)
+- Constructors: `New(...)` returns the type (e.g., `func New(db *sqlx.DB) *Service`)
+
+### Database
+- Use `sqlx` with named parameters
+- Use struct tags: `db:"column_name"` and `json:"field_name"`
+- Transactions for multi-step operations that must be atomic
+- Always close resources with `defer`
+
+### HTTP API
+- Use gorilla/mux for routing
+- Wrap responses with `APIResponse{Success, Data, Error}`
+- Use helper functions: `respondJSON()`, `respondError()`
+- Error codes: UPPER_SNAKE_CASE strings (e.g., "INVALID_CREDENTIALS")
+- Extract player/session from context: `r.Context().Value("player").(*domain.Player)`
+
+### Testing
+- Use table-driven tests with subtests: `t.Run("TestCase", func(t *testing.T) {...})`
+- Create setup helpers: `setupTestXxx(t *testing.T) (*Service, func())`
+- Return cleanup function from setup
+- Use `t.Helper()` in helper functions
+- Test file naming: `xxx_test.go` in the same package
+- **Run tests with privileged permissions** (not in sandbox) using `required_permissions: ["all"]`
+- Run tests sequentially with `-p 1` flag to avoid database conflicts between packages
+
+### Comments & Documentation
+- Document exported types and functions
+- Package comments at the top of main file
+
+### GLI-19 Section References (IMPORTANT)
+When implementing any feature related to GLI-19 compliance, ALWAYS add a comment referencing the relevant section. This is critical for auditors reviewing the codebase.
+
+Format: `// GLI-19 §X.X.X - Brief description`
+
+Examples:
+```go
+// Money represents monetary values with precision (GLI-19 §2.5.6)
+type Money struct { ... }
+
+// ValidateSession checks session timeout (GLI-19 §2.5.4 - Session Management)
+func (s *Service) ValidateSession(ctx context.Context, token string) error { ... }
+
+// GenerateOutcome produces cryptographically secure game results
+// GLI-19 §3.3 - Random Number Generator Requirements
+func (r *RNG) GenerateOutcome() ([]int, error) { ... }
+```
+
+Key GLI-19 sections to reference:
+
+**Platform Requirements:**
+- §2.2 - System Clock (NTP synchronization, timestamps)
+- §2.3 - Control Program Verification (integrity checks)
+- §2.4 - Gaming Management (enable/disable gaming on demand)
+
+**Player Account Management:**
+- §2.5.2 - Registration and Verification
+- §2.5.3 - Authentication and session creation
+- §2.5.4 - Player Inactivity (session timeouts, re-authentication)
+- §2.5.5 - Limitations and Exclusions (deposit/wager/loss limits, self-exclusion)
+- §2.5.6 - Financial Transactions (deposits, withdrawals)
+- §2.5.7 - Transaction Log (balance display, transaction history)
+
+**RNG Requirements:**
+- §3.2 - General RNG Requirements (statistical tests)
+- §3.3 - RNG Strength and Monitoring (cryptographic strength)
+- §3.3.2 - Attack Resistance
+- §3.3.3 - Dynamic Output Monitoring
+
+**Game Requirements:**
+- §4.3 - Game Session Management
+- §4.3.3 - Game Cycle (wager placement, outcome, win credit)
+- §4.5 - Game Outcome Determination
+- §4.6 - Game Fairness (no manipulation, no near-miss)
+- §4.7 - Return to Player (minimum 75% RTP)
+- §4.14 - Game Recall (last game, history)
+- §4.16 - Interrupted Games (resume, void, refund)
+
+**Data and Logging:**
+- §2.8 - Information Requirements
+- §2.8.8 - Significant Event Information (failed logins, large wins, config changes)
+- §2.9 - Reporting Requirements
+
+**Security (Appendix B):**
+- §B.2.3 - Access Control and Authentication
+- §B.4 - Communication Security (TLS 1.2+)
+
+### Monetary Values
+CRITICAL: Never use float64 for money in business logic. Always use:
+```go
+type Money struct {
+    Amount   int64  // cents/smallest unit
+    Currency string // ISO 4217
+}
+```
+Convert only at API boundaries using `Money.Float64()` and `domain.NewMoney()`.
+
+## Security Considerations
+
+- Hash passwords with bcrypt (cost factor 10+)
+- Use JWT for session tokens
+- Implement account lockout after failed attempts
+- Log all significant events via audit service
+- Validate all user input at API boundary
+
+## Development Environment
+
+- **Homebrew installations**: User will grant permissions for any `brew install` commands (use `required_permissions: ["all"]`)
+
+## GLI-19 Compliance Reminders
+
+- All game outcomes must use cryptographically secure RNG
+- Game cycles must be fully logged and recallable
+- Session timeouts must be enforced
+- Financial transactions must be atomic and auditable
+
+## Package to GLI-19 Mapping
+
+| Package | GLI-19 Sections | Description |
+|---------|-----------------|-------------|
+| `internal/auth` | §2.5.2, §2.5.3, §2.5.4 | Player registration, login, sessions |
+| `internal/wallet` | §2.5.6, §2.5.7 | Balance management, transactions |
+| `internal/game` | §4.3, §4.5, §4.14, §4.16 | Game sessions, cycles, outcomes, interrupted games |
+| `internal/rng` | §3.2, §3.3 | Cryptographic RNG, statistical testing |
+| `internal/audit` | §2.8.8, §2.9 | Significant events, logging |
+| `internal/limits` | §2.5.5 | Deposit/wager/loss limits, self-exclusion |
+| `internal/control` | §2.4 | Gaming enable/disable, player suspension |
+
+## Implementing New Features
+
+When implementing any new feature:
+
+1. **Identify the GLI-19 section** that applies
+2. **Add section reference** in the package comment or function doc
+3. **Log significant events** via `audit.Service`
+4. **Use domain.Money** for all monetary values
+5. **Write tests** covering the GLI requirements
+
+## Removing or Modifying GLI-Referenced Code (CRITICAL)
+
+**ALWAYS ASK FOR CONFIRMATION** before removing or significantly modifying any code that contains GLI-19 section references (comments like `// GLI-19 §X.X.X`).
+
+This includes:
+- Deleting functions, types, or files with GLI references
+- Removing GLI comment annotations
+- Refactoring code in a way that changes GLI-compliant behavior
+- Modifying audit logging, RNG, financial calculations, or session management
+
+Example prompt before proceeding:
+> "This code references GLI-19 §2.5.5 (Player Limits). Removing or modifying it may affect regulatory compliance. Are you sure you want to proceed?"
+
+The GLI-19 references exist for auditors and regulatory review. Unauthorized removal could result in compliance violations.
+

@@ -16,11 +16,14 @@ import (
 	"github.com/alexbotov/rgs/internal/audit"
 	"github.com/alexbotov/rgs/internal/auth"
 	"github.com/alexbotov/rgs/internal/config"
+	"github.com/alexbotov/rgs/internal/control"
 	"github.com/alexbotov/rgs/internal/database"
 	"github.com/alexbotov/rgs/internal/domain"
 	"github.com/alexbotov/rgs/internal/game"
+	"github.com/alexbotov/rgs/internal/limits"
 	"github.com/alexbotov/rgs/internal/rng"
 	"github.com/alexbotov/rgs/internal/wallet"
+	"github.com/google/uuid"
 )
 
 // TestServer wraps all services needed for integration testing
@@ -32,6 +35,8 @@ type TestServer struct {
 	Game     *game.Engine
 	RNG      *rng.Service
 	Audit    *audit.Service
+	Limits   *limits.Service
+	Control  *control.Service
 	Handler  *api.Handler
 	Config   *config.Config
 	teardown func()
@@ -84,6 +89,8 @@ func NewTestServer(t *testing.T) *TestServer {
 	authSvc := auth.New(db.DB, &cfg.Auth, auditSvc)
 	walletSvc := wallet.New(db.DB, auditSvc, cfg.Game.DefaultCurrency)
 	gameEngine := game.New(db.DB, rngSvc, walletSvc, auditSvc, cfg.Game.DefaultCurrency)
+	limitsSvc := limits.New(db.DB, auditSvc, cfg.Game.DefaultCurrency)
+	controlSvc := control.New(db.DB, auditSvc)
 
 	// Initialize API handler
 	handler := api.New(authSvc, walletSvc, gameEngine, rngSvc)
@@ -100,6 +107,8 @@ func NewTestServer(t *testing.T) *TestServer {
 		Game:    gameEngine,
 		RNG:     rngSvc,
 		Audit:   auditSvc,
+		Limits:  limitsSvc,
+		Control: controlSvc,
 		Handler: handler,
 		Config:  cfg,
 		teardown: func() {
@@ -884,6 +893,393 @@ func TestCompletePlayerJourney(t *testing.T) {
 	t.Log("  Logged out successfully")
 
 	t.Log("✓ Complete player journey test passed!")
+}
+
+// ============================================================================
+// Player Limits Tests (GLI-19 §2.5.5)
+// ============================================================================
+
+func TestPlayerLimitsIntegration(t *testing.T) {
+	ts := NewTestServer(t)
+	defer ts.Close()
+
+	ctx := context.Background()
+
+	// Create a test player
+	player := ts.createTestUser(t, "limits_player", "limits@example.com", "password123")
+
+	t.Run("SetDepositLimits", func(t *testing.T) {
+		// Set daily deposit limit
+		result, err := ts.Limits.SetDepositLimit(ctx, &limits.SetDepositLimitRequest{
+			PlayerID: player.ID,
+			Period:   "daily",
+			Amount:   10000, // $100
+		})
+		if err != nil {
+			t.Fatalf("Failed to set deposit limit: %v", err)
+		}
+
+		if result.DailyDeposit == nil {
+			t.Error("Expected daily deposit limit to be set")
+		}
+	})
+
+	t.Run("SetWagerLimits", func(t *testing.T) {
+		// Set daily wager limit
+		result, err := ts.Limits.SetWagerLimit(ctx, &limits.SetWagerLimitRequest{
+			PlayerID: player.ID,
+			Period:   "daily",
+			Amount:   5000, // $50
+		})
+		if err != nil {
+			t.Fatalf("Failed to set wager limit: %v", err)
+		}
+
+		if result.DailyWager == nil {
+			t.Error("Expected daily wager limit to be set")
+		}
+	})
+
+	t.Run("SetLossLimits", func(t *testing.T) {
+		// Set daily loss limit
+		result, err := ts.Limits.SetLossLimit(ctx, &limits.SetLossLimitRequest{
+			PlayerID: player.ID,
+			Period:   "daily",
+			Amount:   2500, // $25
+		})
+		if err != nil {
+			t.Fatalf("Failed to set loss limit: %v", err)
+		}
+
+		if result.DailyLoss == nil {
+			t.Error("Expected daily loss limit to be set")
+		}
+	})
+
+	t.Run("VerifyLimitsAreSet", func(t *testing.T) {
+		playerLimits, err := ts.Limits.GetLimits(ctx, player.ID)
+		if err != nil {
+			t.Fatalf("Failed to get limits: %v", err)
+		}
+
+		if playerLimits.DailyDeposit == nil || playerLimits.DailyDeposit.Amount != 10000 {
+			t.Error("Daily deposit limit not correctly set")
+		}
+		if playerLimits.DailyWager == nil || playerLimits.DailyWager.Amount != 5000 {
+			t.Error("Daily wager limit not correctly set")
+		}
+		if playerLimits.DailyLoss == nil || playerLimits.DailyLoss.Amount != 2500 {
+			t.Error("Daily loss limit not correctly set")
+		}
+	})
+}
+
+func TestSelfExclusionIntegration(t *testing.T) {
+	ts := NewTestServer(t)
+	defer ts.Close()
+
+	ctx := context.Background()
+
+	// Create a test player
+	player := ts.createTestUser(t, "exclude_player", "exclude@example.com", "password123")
+
+	t.Run("SelfExcludeWithDuration", func(t *testing.T) {
+		duration := 7 * 24 * time.Hour
+		exclusion, err := ts.Limits.SelfExclude(ctx, player.ID, "Taking a break", &duration)
+		if err != nil {
+			t.Fatalf("Failed to self-exclude: %v", err)
+		}
+
+		if !exclusion.IsActive {
+			t.Error("Expected exclusion to be active")
+		}
+
+		// Verify player is excluded
+		isExcluded, _ := ts.Limits.IsExcluded(ctx, player.ID)
+		if !isExcluded {
+			t.Error("Expected player to be excluded")
+		}
+	})
+
+	t.Run("ExcludedPlayerCannotPlay", func(t *testing.T) {
+		// Try to access gaming
+		err := ts.Control.CheckAccess(ctx, player.ID, "fortune-slots")
+		if err == nil {
+			t.Error("Expected error for excluded player")
+		}
+	})
+}
+
+// ============================================================================
+// Gaming Control Tests (GLI-19 §2.4)
+// ============================================================================
+
+func TestGamingControlIntegration(t *testing.T) {
+	ts := NewTestServer(t)
+	defer ts.Close()
+
+	ctx := context.Background()
+
+	// Create a test player
+	player := ts.createTestUser(t, "control_player", "control@example.com", "password123")
+
+	t.Run("InitiallyEnabled", func(t *testing.T) {
+		if !ts.Control.IsGamingEnabled() {
+			t.Error("Gaming should be enabled by default")
+		}
+	})
+
+	t.Run("DisableAllGaming", func(t *testing.T) {
+		err := ts.Control.DisableAllGaming(ctx, "System maintenance", "admin@test.com")
+		if err != nil {
+			t.Fatalf("Failed to disable gaming: %v", err)
+		}
+
+		if ts.Control.IsGamingEnabled() {
+			t.Error("Gaming should be disabled")
+		}
+
+		// Check access should fail
+		err = ts.Control.CheckAccess(ctx, player.ID, "fortune-slots")
+		if err == nil {
+			t.Error("Expected error when gaming is disabled")
+		}
+	})
+
+	t.Run("EnableAllGaming", func(t *testing.T) {
+		err := ts.Control.EnableAllGaming(ctx, "admin@test.com")
+		if err != nil {
+			t.Fatalf("Failed to enable gaming: %v", err)
+		}
+
+		if !ts.Control.IsGamingEnabled() {
+			t.Error("Gaming should be enabled")
+		}
+	})
+
+	t.Run("DisableSpecificGame", func(t *testing.T) {
+		err := ts.Control.DisableGame(ctx, "fortune-slots", "Game maintenance", "admin@test.com")
+		if err != nil {
+			t.Fatalf("Failed to disable game: %v", err)
+		}
+
+		if ts.Control.IsGameEnabled("fortune-slots") {
+			t.Error("fortune-slots should be disabled")
+		}
+
+		// Other games should still be enabled
+		if !ts.Control.IsGameEnabled("lucky-sevens") {
+			t.Error("lucky-sevens should still be enabled")
+		}
+
+		// Re-enable for other tests
+		ts.Control.EnableGame(ctx, "fortune-slots", "admin@test.com")
+	})
+
+	t.Run("DisablePlayer", func(t *testing.T) {
+		err := ts.Control.DisablePlayer(ctx, player.ID, "Suspicious activity", "admin@test.com")
+		if err != nil {
+			t.Fatalf("Failed to disable player: %v", err)
+		}
+
+		// Check access should fail
+		err = ts.Control.CheckAccess(ctx, player.ID, "fortune-slots")
+		if err == nil {
+			t.Error("Expected error for disabled player")
+		}
+
+		// Re-enable player
+		ts.Control.EnablePlayer(ctx, player.ID, "admin@test.com")
+	})
+
+	t.Run("GetSystemStatus", func(t *testing.T) {
+		status, err := ts.Control.GetSystemStatus(ctx)
+		if err != nil {
+			t.Fatalf("Failed to get system status: %v", err)
+		}
+
+		if !status.GamingEnabled {
+			t.Error("Expected gaming to be enabled")
+		}
+	})
+}
+
+// ============================================================================
+// Interrupted Games Tests (GLI-19 §4.16)
+// ============================================================================
+
+func TestInterruptedGamesIntegration(t *testing.T) {
+	ts := NewTestServer(t)
+	defer ts.Close()
+
+	ctx := context.Background()
+
+	// Create player and fund account
+	player := ts.createTestUser(t, "interrupted_player", "interrupted@example.com", "password123")
+	ts.Wallet.Deposit(ctx, player.ID, domain.NewMoney(500.00, "USD"), "initial-deposit")
+
+	t.Run("GetInterruptedGamesEmpty", func(t *testing.T) {
+		interrupted, err := ts.Game.GetInterruptedGames(ctx, player.ID)
+		if err != nil {
+			t.Fatalf("Failed to get interrupted games: %v", err)
+		}
+
+		if len(interrupted) != 0 {
+			t.Errorf("Expected 0 interrupted games, got %d", len(interrupted))
+		}
+	})
+
+	t.Run("PlayAndInterrupt", func(t *testing.T) {
+		// Start a game session
+		session, err := ts.Game.StartSession(ctx, player.ID, "fortune-slots")
+		if err != nil {
+			t.Fatalf("Failed to start session: %v", err)
+		}
+
+		// Play successfully first
+		_, err = ts.Game.Play(ctx, &game.PlayRequest{
+			SessionID:   session.ID,
+			WagerAmount: 100,
+		})
+		if err != nil {
+			t.Fatalf("Failed to play: %v", err)
+		}
+
+		// Simulate an interrupted game by inserting directly
+		cycleID := uuid.New().String()
+		_, err = ts.DB.DB.ExecContext(ctx, `
+			INSERT INTO game_cycles (id, session_id, player_id, game_id, started_at, wager_amount, win_amount, balance_before, balance_after, outcome, status, currency)
+			VALUES ($1, $2, $3, $4, NOW(), 200, 0, 50000, 49800, '{"reels":["7","BAR","CHERRY"]}', $5, 'USD')
+		`, cycleID, session.ID, player.ID, "fortune-slots", domain.CycleStatusInterrupted)
+		if err != nil {
+			t.Fatalf("Failed to create interrupted cycle: %v", err)
+		}
+
+		// Verify interrupted game is detected
+		interrupted, err := ts.Game.GetInterruptedGames(ctx, player.ID)
+		if err != nil {
+			t.Fatalf("Failed to get interrupted games: %v", err)
+		}
+
+		if len(interrupted) != 1 {
+			t.Fatalf("Expected 1 interrupted game, got %d", len(interrupted))
+		}
+
+		if interrupted[0].CycleID != cycleID {
+			t.Errorf("Expected cycle ID %s, got %s", cycleID, interrupted[0].CycleID)
+		}
+	})
+
+	t.Run("VoidInterruptedGame", func(t *testing.T) {
+		interrupted, _ := ts.Game.GetInterruptedGames(ctx, player.ID)
+		if len(interrupted) == 0 {
+			t.Skip("No interrupted games to void")
+		}
+
+		cycleID := interrupted[0].CycleID
+		err := ts.Game.VoidGame(ctx, cycleID, "Player requested void")
+		if err != nil {
+			t.Fatalf("Failed to void game: %v", err)
+		}
+
+		// Verify no more interrupted games
+		remaining, _ := ts.Game.GetInterruptedGames(ctx, player.ID)
+		if len(remaining) != 0 {
+			t.Errorf("Expected 0 interrupted games after void, got %d", len(remaining))
+		}
+	})
+}
+
+// ============================================================================
+// Responsible Gaming Flow Test (GLI-19 §2.5.5)
+// ============================================================================
+
+func TestResponsibleGamingFlow(t *testing.T) {
+	ts := NewTestServer(t)
+	defer ts.Close()
+
+	ctx := context.Background()
+
+	// Step 1: Create player
+	t.Log("Step 1: Creating player for responsible gaming test...")
+	player := ts.createTestUser(t, "responsible_player", "responsible@example.com", "password123")
+	ts.Wallet.Deposit(ctx, player.ID, domain.NewMoney(1000.00, "USD"), "initial-deposit")
+
+	// Step 2: Set responsible gaming limits
+	t.Log("Step 2: Setting responsible gaming limits...")
+
+	_, err := ts.Limits.SetDepositLimit(ctx, &limits.SetDepositLimitRequest{
+		PlayerID: player.ID,
+		Period:   "daily",
+		Amount:   50000, // $500
+	})
+	if err != nil {
+		t.Fatalf("Failed to set deposit limit: %v", err)
+	}
+
+	_, err = ts.Limits.SetWagerLimit(ctx, &limits.SetWagerLimitRequest{
+		PlayerID: player.ID,
+		Period:   "daily",
+		Amount:   20000, // $200
+	})
+	if err != nil {
+		t.Fatalf("Failed to set wager limit: %v", err)
+	}
+
+	_, err = ts.Limits.SetLossLimit(ctx, &limits.SetLossLimitRequest{
+		PlayerID: player.ID,
+		Period:   "daily",
+		Amount:   10000, // $100
+	})
+	if err != nil {
+		t.Fatalf("Failed to set loss limit: %v", err)
+	}
+
+	t.Log("  Limits set: Daily deposit $500, Daily wager $200, Daily loss $100")
+
+	// Step 3: Verify limits
+	t.Log("Step 3: Verifying limits are set...")
+	playerLimits, _ := ts.Limits.GetLimits(ctx, player.ID)
+	t.Logf("  Daily deposit: $%.2f", float64(playerLimits.DailyDeposit.Amount)/100)
+	t.Logf("  Daily wager: $%.2f", float64(playerLimits.DailyWager.Amount)/100)
+	t.Logf("  Daily loss: $%.2f", float64(playerLimits.DailyLoss.Amount)/100)
+
+	// Step 4: Test limit decrease is immediate
+	t.Log("Step 4: Testing limit decrease (should be immediate)...")
+	newLimits, _ := ts.Limits.SetDepositLimit(ctx, &limits.SetDepositLimitRequest{
+		PlayerID: player.ID,
+		Period:   "daily",
+		Amount:   25000, // $250 - decrease
+	})
+	if newLimits.EffectiveAt.After(time.Now().Add(time.Second)) {
+		t.Error("Limit decrease should be immediate")
+	} else {
+		t.Log("  ✓ Limit decrease is immediate")
+	}
+
+	// Step 5: Test limit increase requires cooling off
+	t.Log("Step 5: Testing limit increase (should require cooling off)...")
+	newLimits, _ = ts.Limits.SetDepositLimit(ctx, &limits.SetDepositLimitRequest{
+		PlayerID: player.ID,
+		Period:   "daily",
+		Amount:   50000, // $500 - increase
+	})
+	if newLimits.EffectiveAt.Before(time.Now().Add(23 * time.Hour)) {
+		t.Error("Limit increase should have 24-hour cooling off")
+	} else {
+		t.Log("  ✓ Limit increase has cooling off period")
+	}
+
+	// Step 6: Verify player is not excluded
+	t.Log("Step 6: Verifying player is not self-excluded...")
+	excluded, _ := ts.Limits.IsExcluded(ctx, player.ID)
+	if excluded {
+		t.Error("Player should not be excluded")
+	} else {
+		t.Log("  ✓ Player is not excluded")
+	}
+
+	t.Log("✓ Responsible gaming flow test passed!")
 }
 
 // ============================================================================

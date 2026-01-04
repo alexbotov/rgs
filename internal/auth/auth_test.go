@@ -191,17 +191,23 @@ func TestValidateToken(t *testing.T) {
 	ctx := context.Background()
 
 	// Register and login
-	svc.Register(ctx, &RegisterRequest{
+	_, regErr := svc.Register(ctx, &RegisterRequest{
 		Username: "tokenuser",
 		Email:    "token@example.com",
 		Password: "password123",
 		AcceptTC: true,
 	}, "127.0.0.1")
+	if regErr != nil {
+		t.Fatalf("Registration failed: %v", regErr)
+	}
 
-	loginResult, _ := svc.Login(ctx, &LoginRequest{
+	loginResult, loginErr := svc.Login(ctx, &LoginRequest{
 		Username: "tokenuser",
 		Password: "password123",
 	}, "127.0.0.1", "TestAgent")
+	if loginErr != nil {
+		t.Fatalf("Login failed: %v", loginErr)
+	}
 
 	t.Run("ValidToken", func(t *testing.T) {
 		session, player, err := svc.ValidateToken(ctx, loginResult.Token)

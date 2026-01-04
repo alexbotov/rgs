@@ -1,5 +1,11 @@
 // Package domain contains core domain models for the RGS
 // Based on GLI-19 Standards for Interactive Gaming Systems V3.0
+//
+// Key GLI-19 References:
+//   - §2.5: Player Account Management
+//   - §2.5.6/§2.5.7: Financial Transactions
+//   - §4.3: Game Session Management
+//   - §4.3.3: Game Cycle Requirements
 package domain
 
 import (
@@ -84,7 +90,9 @@ type Session struct {
 	Status         SessionStatus `json:"status" db:"status"`
 }
 
-// TransactionType represents transaction types (GLI-19 §2.5.6)
+// TransactionType represents transaction types
+// GLI-19 §2.5.6 - Financial Transactions: All financial transactions must be logged
+// GLI-19 §2.5.7 - Transaction Log: Complete record of all transactions required
 type TransactionType string
 
 const (
@@ -208,7 +216,9 @@ const (
 	SeverityCritical EventSeverity = "critical"
 )
 
-// AuditEvent represents a significant event (GLI-19 §2.8.8)
+// AuditEvent represents a significant event
+// GLI-19 §2.8.8 - Significant Event Information: System must log all significant events
+// including failed logins, program errors, large wins, and configuration changes
 type AuditEvent struct {
 	ID          string          `json:"id" db:"id"`
 	Type        string          `json:"type" db:"type"`
@@ -230,5 +240,79 @@ type Balance struct {
 	Available    Money     `json:"available"`
 	Currency     string    `json:"currency"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// LimitSource indicates who set the limit
+// GLI-19 §2.5.5 - Limitations and Exclusions
+type LimitSource string
+
+const (
+	LimitSourcePlayer    LimitSource = "player"    // Self-imposed by player
+	LimitSourceOperator  LimitSource = "operator"  // Set by operator
+	LimitSourceRegulator LimitSource = "regulator" // Required by regulation
+)
+
+// PlayerLimits represents player-imposed responsible gaming limits
+// GLI-19 §2.5.5 - Limitations and Exclusions: Players must be able to set
+// deposit, wager, loss, and session limits. Limit decreases are immediate;
+// limit increases require a cooling-off period.
+type PlayerLimits struct {
+	ID              string      `json:"id" db:"id"`
+	PlayerID        string      `json:"player_id" db:"player_id"`
+	DailyDeposit    *Money      `json:"daily_deposit,omitempty" db:"daily_deposit"`
+	WeeklyDeposit   *Money      `json:"weekly_deposit,omitempty" db:"weekly_deposit"`
+	MonthlyDeposit  *Money      `json:"monthly_deposit,omitempty" db:"monthly_deposit"`
+	DailyWager      *Money      `json:"daily_wager,omitempty" db:"daily_wager"`
+	WeeklyWager     *Money      `json:"weekly_wager,omitempty" db:"weekly_wager"`
+	DailyLoss       *Money      `json:"daily_loss,omitempty" db:"daily_loss"`
+	WeeklyLoss      *Money      `json:"weekly_loss,omitempty" db:"weekly_loss"`
+	SessionDuration *int64      `json:"session_duration_minutes,omitempty" db:"session_duration"` // in minutes
+	CoolingOffUntil *time.Time  `json:"cooling_off_until,omitempty" db:"cooling_off_until"`
+	Source          LimitSource `json:"source" db:"source"`
+	EffectiveAt     time.Time   `json:"effective_at" db:"effective_at"`
+	UpdatedAt       time.Time   `json:"updated_at" db:"updated_at"`
+}
+
+// SelfExclusion represents a player's self-exclusion record
+// GLI-19 §2.5.5.c - Self-Exclusion: Players must be able to self-exclude
+// with minimum cooling-off periods before removal
+type SelfExclusion struct {
+	ID          string     `json:"id" db:"id"`
+	PlayerID    string     `json:"player_id" db:"player_id"`
+	Reason      string     `json:"reason" db:"reason"`
+	StartedAt   time.Time  `json:"started_at" db:"started_at"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty" db:"expires_at"` // nil = permanent
+	RemovedAt   *time.Time `json:"removed_at,omitempty" db:"removed_at"`
+	RemovedBy   *string    `json:"removed_by,omitempty" db:"removed_by"`
+	IsActive    bool       `json:"is_active" db:"is_active"`
+	CreatedAt   time.Time  `json:"created_at" db:"created_at"`
+}
+
+// InterruptedGame represents a game that was interrupted before completion
+// GLI-19 §4.16 - Interrupted Games: System must handle game interruptions
+// gracefully and allow resumption or voiding with proper refunds
+type InterruptedGame struct {
+	CycleID       string          `json:"cycle_id" db:"cycle_id"`
+	SessionID     string          `json:"session_id" db:"session_id"`
+	PlayerID      string          `json:"player_id" db:"player_id"`
+	GameID        string          `json:"game_id" db:"game_id"`
+	InterruptedAt time.Time       `json:"interrupted_at" db:"interrupted_at"`
+	Reason        string          `json:"reason" db:"reason"`
+	WagerHeld     Money           `json:"wager_held" db:"wager_held"`
+	GameState     json.RawMessage `json:"game_state" db:"game_state"`
+	CanResume     bool            `json:"can_resume" db:"can_resume"`
+	ResolvedAt    *time.Time      `json:"resolved_at,omitempty" db:"resolved_at"`
+	Resolution    string          `json:"resolution,omitempty" db:"resolution"` // resumed, voided, completed
+}
+
+// GamingSystemStatus represents the overall gaming system state
+// GLI-19 §2.4 - Gaming Management: Operator must be able to disable gaming on demand
+type GamingSystemStatus struct {
+	GamingEnabled     bool      `json:"gaming_enabled"`
+	DisabledAt        *time.Time `json:"disabled_at,omitempty"`
+	DisabledBy        string    `json:"disabled_by,omitempty"`
+	DisabledReason    string    `json:"disabled_reason,omitempty"`
+	ActiveSessions    int64     `json:"active_sessions"`
+	LastStateChange   time.Time `json:"last_state_change"`
 }
 
